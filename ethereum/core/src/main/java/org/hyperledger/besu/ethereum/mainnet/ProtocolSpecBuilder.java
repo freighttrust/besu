@@ -144,6 +144,9 @@ public class ProtocolSpecBuilder<T> {
             MainnetPrecompiledContractRegistries.appendPrivacy(
                 registry, precompiledContractConfiguration, 1);
           }
+          // TODO: make conditional on configuration
+          MainnetPrecompiledContractRegistries.appendDamlPublic(
+              registry, precompiledContractConfiguration, Account.DEFAULT_VERSION);
           return registry;
         };
     return this;

@@ -46,6 +46,10 @@ public class Address extends DelegatingBytes implements org.hyperledger.besu.plu
   public static final Integer PRIVACY = Byte.MAX_VALUE - 1;
   public static final Address DEFAULT_PRIVACY = Address.precompiled(PRIVACY);
 
+  // Second-last address that can be generated for a pre-compiled
+  // contract
+  public static final Address DAML_PUBLIC = Address.precompiled(Byte.MAX_VALUE - 10);
+
   public static final Address ZERO = Address.fromHexString("0x0");
 
   protected Address(final Bytes bytes) {
