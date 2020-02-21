@@ -14,7 +14,7 @@
  */
 package org.hyperledger.besu.ethereum.mainnet.precompiles.daml;
 
-import org.hyperledger.besu.ethereum.core.Address;
+import org.hyperledger.besu.ethereum.core.MutableAccount;
 
 import java.util.Collection;
 import java.util.List;
@@ -30,14 +30,10 @@ import com.google.protobuf.Timestamp;
 
 @SuppressWarnings("unused")
 public class DamlLedgerState implements LedgerState {
-  private final Address from;
-  private final Address to;
-  private final long timestamp;
+  private final MutableAccount account;
 
-  public DamlLedgerState(final Address from, final Address to, final long timestamp) {
-    this.from = from;
-    this.to = to;
-    this.timestamp = timestamp;
+  public DamlLedgerState(final MutableAccount targetAccount) {
+    this.account = targetAccount;
   }
 
   @Override
