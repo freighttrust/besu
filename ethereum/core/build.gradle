@@ -27,6 +27,8 @@ jar {
   }
 }
 
+sourceSets.main.java.srcDirs += 'build/generated/source/proto/main/java'
+
 dependencies {
   annotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess'
 
