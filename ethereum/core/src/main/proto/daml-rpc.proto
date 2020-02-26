@@ -41,11 +41,8 @@ message DamlTransaction {
   bytes submission = 2;
 }
 
-message DamlLogEntryIndex { repeated string addresses = 1; }
-
-message ConfigurationMap { repeated ConfigurationEntry entries = 1; }
-
-message ConfigurationEntry {
-  string key = 1;
-  bytes value = 2;
+message DamlLogEvent {
+  int32 version = 1;
+  bytes logEntryId = 2;
+  bytes logEntry = 3;
 }
