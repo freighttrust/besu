@@ -14,118 +14,250 @@
  */
 package org.hyperledger.besu.ethereum.mainnet.precompiles.daml;
 
+import org.hyperledger.besu.ethereum.core.AccountStorageEntry;
 import org.hyperledger.besu.ethereum.core.MutableAccount;
+import org.hyperledger.besu.ethereum.rlp.RLP;
 
+import java.nio.ByteBuffer;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlCommandDedupValue;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlLogEntry;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlLogEntryId;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlStateKey;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlStateValue;
+import com.daml.ledger.participant.state.kvutils.KeyValueCommitting;
 import com.daml.ledger.participant.state.v1.TimeModel;
+import com.google.common.collect.Lists;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.MessageLite;
 import com.google.protobuf.Timestamp;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.bytes.Bytes32;
+import org.apache.tuweni.units.bigints.UInt256;
 
 @SuppressWarnings("unused")
 public class DamlLedgerState implements LedgerState {
+  private static final Logger LOG = LogManager.getLogger();
+
   private final MutableAccount account;
 
-  public DamlLedgerState(final MutableAccount targetAccount) {
-    this.account = targetAccount;
+  public DamlLedgerState(final MutableAccount theAccount) {
+    this.account = theAccount;
+  }
+
+  /**
+   * Returns a UInt256 representation of a protocol buffer message.
+   *
+   * @param value byte string
+   * @return UInt256 representation of byte string provided
+   */
+  private static UInt256 toUInt256(final MessageLite value) {
+    return UInt256.fromBytes(DamlLedgerState.toBytes(value));
+  }
+
+  private static Bytes toBytes(final MessageLite value) {
+    return Bytes.of(value.toByteArray());
   }
 
   @Override
   public DamlStateValue getDamlState(final DamlStateKey key) throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
+    if (key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)) {
+      return DamlStateValue.newBuilder()
+          .setCommandDedup(DamlCommandDedupValue.newBuilder().build())
+          .build();
+    }
+    // return KeyValueCommitting.unpackDamlStateValue(uncompressByteString(bs));
+
+    final UInt256 ethKey = DamlLedgerState.toUInt256(key);
+    final ByteBuffer buf = getLedgerEntry(ethKey);
+    try {
+      return DamlStateValue.parseFrom(buf);
+    } catch (final InvalidProtocolBufferException ipbe) {
+      throw new InternalError("Failed to parse daml state", ipbe);
+    }
   }
 
   @Override
   public Map<DamlStateKey, DamlStateValue> getDamlStates(final Collection<DamlStateKey> keys)
       throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
+    final Map<DamlStateKey, DamlStateValue> states = new LinkedHashMap<>();
+    keys.forEach(
+        key -> {
+          try {
+            states.put(key, getDamlState(key));
+          } catch (final InternalError e) {
+            LOG.error("Failed to parse daml state:", e);
+          }
+        });
+    return states;
   }
 
   @Override
   public Map<DamlStateKey, DamlStateValue> getDamlStates(final DamlStateKey... keys)
       throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
-  }
-
-  @Override
-  public Map<DamlLogEntryId, DamlLogEntry> getDamlLogEntries(final Collection<DamlLogEntryId> keys)
-      throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
-  }
-
-  @Override
-  public Map<DamlLogEntryId, DamlLogEntry> getDamlLogEntries(final DamlLogEntryId... keys)
-      throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
+    return getDamlStates(Lists.newArrayList(keys));
   }
 
   @Override
   public DamlLogEntry getDamlLogEntry(final DamlLogEntryId entryId) throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
+    final UInt256 ethKey = DamlLedgerState.toUInt256(entryId);
+    final ByteBuffer buf = getLedgerEntry(ethKey);
+    try {
+      return DamlLogEntry.parseFrom(buf);
+    } catch (final InvalidProtocolBufferException ipbe) {
+      throw new InternalError("Failed to parse daml log entry", ipbe);
+    }
+  }
+
+  private ByteBuffer getLedgerEntry(final UInt256 key) {
+    final UInt256 first = account.getStorageValue(key);
+    int count = Namespace.getLedgerEntryPartCount(first.toBytes());
+
+    // now reconstitute RLP bytes from all ethereum slices created for this ledger entry
+    final Map<Bytes32, AccountStorageEntry> entryMap =
+        account.storageEntriesFrom(key.toBytes(), count);
+
+    // java 8 voodoo version
+    final Bytes rawRlp =
+        entryMap.values().stream()
+            .map(e -> (Bytes) e.getValue().toBytes())
+            .reduce(
+                Bytes.EMPTY,
+                (accumulatedBytes, bytesToConcatenate) ->
+                    Bytes.concatenate(accumulatedBytes, bytesToConcatenate));
+
+    // readable version
+    // Bytes rawRlp = Bytes.EMPTY;
+    // for (AccountStorageEntry e : entryMap.values()) {
+    //   rawRlp = Bytes.concatenate(rawRlp, e.getValue().toBytes());
+    // }
+
+    final Bytes entry = RLP.decodeOne(rawRlp);
+    if (!entry.isEmpty() || entry.isZero()) {
+      return ByteBuffer.wrap(entry.toArray());
+    } else {
+      throw new InternalError("Cannot parse empty daml ledger entry");
+    }
+  }
+
+  @Override
+  public Map<DamlLogEntryId, DamlLogEntry> getDamlLogEntries(final Collection<DamlLogEntryId> ids)
+      throws InternalError {
+    final Map<DamlLogEntryId, DamlLogEntry> logs = new LinkedHashMap<>();
+    ids.forEach(
+        id -> {
+          try {
+            logs.put(id, getDamlLogEntry(id));
+          } catch (final InternalError e) {
+            LOG.error("Failed to parse daml log entry:", e);
+          }
+        });
+    return logs;
+  }
+
+  @Override
+  public Map<DamlLogEntryId, DamlLogEntry> getDamlLogEntries(final DamlLogEntryId... ids)
+      throws InternalError {
+    return getDamlLogEntries(Lists.newArrayList(ids));
+  }
+
+  /**
+   * Add the supplied data to the ledger, in multiple parts if necessary.
+   *
+   * @param rootAddress hashed address minus the 8 bytes we use to encode the number of parts used
+   *     to store the entry
+   * @param entry value to store in the ledger
+   * @return unsigned 256-bit representation of the address of the first part
+   */
+  private UInt256 addLedgerEntry(final String rootAddress, final ByteString entry) {
+    // RLP-encode the entry
+    final Bytes encoded = RLP.encodeOne(Bytes.of(entry.toByteArray()));
+    final int partCount = encoded.size() / Namespace.ADDRESS_HEX_STRING_LENGTH + 1;
+
+    // store the first part of the entry with total number of parts encoded
+    Bytes data = encoded.slice(0, Namespace.ADDRESS_HEX_STRING_LENGTH);
+    Bytes address = Namespace.makeAddress(rootAddress, partCount);
+    account.setStorageValue(UInt256.fromBytes(address), UInt256.fromBytes(data));
+    final Bytes baseAddress = address;
+
+    // store remaining parts, if any
+    int offset = Namespace.ADDRESS_HEX_STRING_LENGTH;
+    int index = 2;
+    while (offset < encoded.size()) {
+      int length = Math.min(Namespace.ADDRESS_HEX_STRING_LENGTH, encoded.size() - offset);
+      data = encoded.slice(offset, length);
+      address = Namespace.makeAddress(rootAddress, index);
+      account.setStorageValue(UInt256.fromBytes(address), UInt256.fromBytes(data));
+
+      index++;
+      offset += Namespace.ADDRESS_HEX_STRING_LENGTH;
+    }
+    return UInt256.fromBytes(baseAddress);
   }
 
   @Override
   public void setDamlState(final DamlStateKey key, final DamlStateValue value)
       throws InternalError {
-    // TODO Auto-generated method stub
+    final ByteString packedKey = KeyValueCommitting.packDamlStateKey(key);
+    final ByteString packedValue =
+        key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)
+            ? packedKey
+            : KeyValueCommitting.packDamlStateValue(value);
+    final String rootAddress = Namespace.makeAddress(Namespace.DAML_NS_STATE_VALUE, packedKey);
+    addLedgerEntry(rootAddress, packedValue);
   }
 
   @Override
   public void setDamlStates(final Collection<Entry<DamlStateKey, DamlStateValue>> entries)
       throws InternalError {
-    // TODO Auto-generated method stub
+    entries.forEach(e -> setDamlState(e.getKey(), e.getValue()));
   }
 
   @Override
-  public List<String> addDamlLogEntry(final DamlLogEntryId entryId, final DamlLogEntry entry)
+  public UInt256 addDamlLogEntry(final DamlLogEntryId entryId, final DamlLogEntry entry)
       throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
+    final ByteString packedEntryId = KeyValueCommitting.packDamlLogEntryId(entryId);
+    final String rootAddress = Namespace.makeAddress(Namespace.DAML_NS_LOG_ENTRY, packedEntryId);
+    return addLedgerEntry(rootAddress, KeyValueCommitting.packDamlLogEntry(entry));
   }
 
   @Override
   public void sendLogEvent(final DamlLogEntryId entryId, final DamlLogEntry entry)
       throws InternalError {
-    // TODO Auto-generated method stub
+    throw new InternalError("Method not implemented");
   }
 
   @Override
   public Timestamp getRecordTime() throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
+    // throw new InternalError("Method not implemented");
+    return Timestamp.getDefaultInstance();
   }
 
   @Override
   public void updateLogEntryIndex(final List<String> addresses) throws InternalError {
-    // TODO Auto-generated method stub
+    throw new InternalError("Method not implemented");
   }
 
   @Override
   public List<String> getLogEntryIndex() throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
+    throw new InternalError("Method not implemented");
   }
 
   @Override
   public TimeModel getTimeModel() throws InternalError {
-    // TODO Auto-generated method stub
-    return null;
+    throw new InternalError("Method not implemented");
   }
 
   @Override
   public void setTimeModel(final TimeModel tm) throws InternalError {
-    // TODO Auto-generated method stub
+    throw new InternalError("Method not implemented");
   }
 }

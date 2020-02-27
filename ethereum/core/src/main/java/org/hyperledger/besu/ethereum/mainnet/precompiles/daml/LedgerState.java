@@ -25,6 +25,7 @@ import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlStateKey;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlStateValue;
 import com.daml.ledger.participant.state.v1.TimeModel;
 import com.google.protobuf.Timestamp;
+import org.apache.tuweni.units.bigints.UInt256;
 
 /**
  * An interface to keep the coupling to the context implementation loose.
@@ -64,6 +65,16 @@ public interface LedgerState {
   Map<DamlStateKey, DamlStateValue> getDamlStates(DamlStateKey... keys) throws InternalError;
 
   /**
+   * Get the log entry for a given log entry id.
+   *
+   * @param entryId identifies the log entry
+   * @return the log entry
+   * @throws InternalError system error
+   * @throws InvalidTransactionException an attempt to read a contract which is not allowed.
+   */
+  DamlLogEntry getDamlLogEntry(DamlLogEntryId entryId) throws InternalError;
+
+  /**
    * Fetch a collection of log entries from the ledger state.
    *
    * @param keys a collection DamlLogEntryIds identifying the objects
@@ -83,16 +94,6 @@ public interface LedgerState {
    * @throws InternalError when there is an unexpected back end error.
    */
   Map<DamlLogEntryId, DamlLogEntry> getDamlLogEntries(DamlLogEntryId... keys) throws InternalError;
-
-  /**
-   * Get the log entry for a given log entry id.
-   *
-   * @param entryId identifies the log entry
-   * @return the log entry
-   * @throws InternalError system error
-   * @throws InvalidTransactionException an attempt to read a contract which is not allowed.
-   */
-  DamlLogEntry getDamlLogEntry(DamlLogEntryId entryId) throws InternalError;
 
   /**
    * @param key The key identifying this DamlStateValue
@@ -118,10 +119,10 @@ public interface LedgerState {
    * @throws InvalidTransactionException when there is an error relating to the client input
    * @throws InternalError when there is an unexpected back end error.
    */
-  List<String> addDamlLogEntry(DamlLogEntryId entryId, DamlLogEntry entry) throws InternalError;
+  UInt256 addDamlLogEntry(DamlLogEntryId entryId, DamlLogEntry entry) throws InternalError;
 
   /**
-   * Record an event containing the provided log info.
+   * Record an event containing the provided log info.z
    *
    * @param entryId the id of this log entry
    * @param entry the entry itself
