@@ -14,18 +14,6 @@
  */
 package org.hyperledger.besu.ethereum.mainnet.precompiles.daml;
 
-import org.hyperledger.besu.ethereum.chain.Blockchain;
-import org.hyperledger.besu.ethereum.core.Address;
-import org.hyperledger.besu.ethereum.core.Gas;
-import org.hyperledger.besu.ethereum.core.Log;
-import org.hyperledger.besu.ethereum.core.MutableAccount;
-import org.hyperledger.besu.ethereum.core.WorldUpdater;
-import org.hyperledger.besu.ethereum.mainnet.AbstractPrecompiledContract;
-import org.hyperledger.besu.ethereum.vm.Code;
-import org.hyperledger.besu.ethereum.vm.GasCalculator;
-import org.hyperledger.besu.ethereum.vm.MessageFrame;
-import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
-
 import java.nio.charset.Charset;
 import java.time.Duration;
 import java.util.Arrays;
@@ -50,12 +38,27 @@ import com.daml.ledger.participant.state.v1.Configuration;
 import com.daml.ledger.participant.state.v1.TimeModel;
 import com.digitalasset.daml.lf.data.Time.Timestamp;
 import com.digitalasset.daml.lf.engine.Engine;
+import com.google.common.collect.Lists;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import com.google.protobuf.util.Timestamps;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
+import org.hyperledger.besu.ethereum.chain.Blockchain;
+import org.hyperledger.besu.ethereum.core.Address;
+import org.hyperledger.besu.ethereum.core.Gas;
+import org.hyperledger.besu.ethereum.core.Log;
+import org.hyperledger.besu.ethereum.core.LogTopic;
+import org.hyperledger.besu.ethereum.core.MutableAccount;
+import org.hyperledger.besu.ethereum.core.WorldUpdater;
+import org.hyperledger.besu.ethereum.mainnet.AbstractPrecompiledContract;
+import org.hyperledger.besu.ethereum.vm.Code;
+import org.hyperledger.besu.ethereum.vm.GasCalculator;
+import org.hyperledger.besu.ethereum.vm.MessageFrame;
+import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
+
 import scala.Option;
 import scala.Tuple2;
 
@@ -63,6 +66,8 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
   private static final Logger LOG = LogManager.getLogger();
 
   private static final String DAML_PUBLIC = "DamlPublic";
+
+  private static final LogTopic DAML_LOG_TOPIC = LogTopic.create(Bytes.of("daml/log-event".getBytes()));
 
   private static final int DEFAULT_MAX_TTL = 80; // 4x TimeKeeper period
   private static final int DEFAULT_MAX_CLOCK_SKEW = 40; // 2x TimeKeeper period
@@ -132,7 +137,9 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
                 "Parsed DamlSubmission protobuf %s [%s]",
                 JsonFormat.printer().print(submission),
                 Bytes.of(submission.toByteArray()).toHexString()));
-        processTransaction(ledgerState, submission, participantId, entryId, updater);
+
+        Bytes logEvent = processTransaction(ledgerState, submission, participantId, entryId, updater);
+        messageFrame.addLog(new Log(Address.DAML_PUBLIC, logEvent, Lists.newArrayList(DAML_LOG_TOPIC)));
       } else {
         LOG.debug("DamlOperation DOES NOT contain a transaction, ignoring ...");
       }
@@ -152,7 +159,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     return Bytes.EMPTY;
   }
 
-  private void processTransaction(
+  private Bytes processTransaction(
       final LedgerState ledgerState,
       final DamlSubmission submission,
       final String participantId,
@@ -170,7 +177,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     }
 
     long recordStateStart = System.currentTimeMillis();
-    recordState(ledgerState, submission, participantId, stateMap, entryId, updater);
+    Bytes logEvent = recordState(ledgerState, submission, participantId, stateMap, entryId, updater);
 
     long processFinished = System.currentTimeMillis();
     long recordStateTime = processFinished - recordStateStart;
@@ -179,6 +186,8 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         String.format(
             "Finished processing transaction, times=[fetch=%s,record=%s]",
             fetchStateTime, recordStateTime));
+
+    return logEvent;
   }
 
   private Map<DamlStateKey, Option<DamlStateValue>> buildStateMap(
@@ -230,7 +239,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     return inputStatesWithOption;
   }
 
-  private void recordState(
+  private Bytes recordState(
       final LedgerState ledgerState,
       final DamlSubmission submission,
       final String participantId,
@@ -274,8 +283,6 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     ledgerState.addDamlLogEntry(entryId, newLogEntry);
 
     updater.commit();
-    @SuppressWarnings("unused")
-    Log log = new Log(null, Bytes.of(newLogEntry.toByteArray()), null);
 
     long recordFinish = System.currentTimeMillis();
     long processTime = recordStart - processStart;
@@ -285,6 +292,8 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         String.format(
             "Record state timings [ total=%s, process=%s, setState=%s ]",
             totalTime, processTime, setStateTime));
+
+    return Bytes.of(Base64.getEncoder().encode(newLogEntry.toByteArray()));
   }
 
   private Timestamp getRecordTime(final LedgerState ledgerState) throws InternalError {
