@@ -17,7 +17,6 @@ package org.hyperledger.besu.ethereum.mainnet.precompiles.daml;
 import org.hyperledger.besu.ethereum.core.Address;
 
 import java.math.BigInteger;
-import java.nio.charset.Charset;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
@@ -25,97 +24,85 @@ import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlLogEntryId;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlStateKey;
 import com.google.protobuf.ByteString;
 import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.bytes.Bytes32;
 
 /** Utility class dealing with DAML namespace functions and values. */
 public final class Namespace {
-  /** Sawtooth Namespaces are 6 chars long. */
-  public static final int NAMESPACE_LENGTH = 6;
-
   /**
-   * An ethereum address is 20 bytes represented in hexadecimal with a "0x" prefix, hence 42
-   * characters in length
+   * An ethereum address is 20 bytes represented as a hexadecimal string with a "0x" prefix, hence
+   * 42 characters in length.
    */
   public static final int ADDRESS_STRING_LENGTH = Address.SIZE * 2;
 
   public static final int ADDRESS_HEX_STRING_LENGTH = ADDRESS_STRING_LENGTH + "0x".length();
 
-  public static final String DAML_PUBLIC_ACCOUNT = Address.DAML_PUBLIC.toHexString();
+  /** The size of an ethereum storage slot. */
+  public static final int STORAGE_SLOT_SIZE = Bytes32.SIZE;
 
-  /** Family Version 1.0 . */
-  public static final String DAML_FAMILY_VERSION_1_0 = "1.0";
+  /** The ethereum address of the DAML precompiled contract. */
+  public static final String DAML_PUBLIC_ACCOUNT =
+      String.format("%02x", Address.DAML_PUBLIC.toBigInteger());
 
   /** Address space for DamlStateValues. */
-  public static final String DAML_NS_STATE_VALUE = getNameSpace() + "00";
+  public static final String DAML_NS_STATE_VALUE = getDamlKeyRoot("00");
 
   /** Address space for Log Entries. */
-  public static final String DAML_NS_LOG_ENTRY = getNameSpace() + "01";
+  public static final String DAML_NS_LOG_ENTRY = getDamlKeyRoot("01");
 
   /**
-   * The first 6 characters of the family name hash.
+   * Return the ethereum address of the DAML precompiled contract.
    *
-   * @return The first 6 characters of the family name hash
+   * @return ethereum address of DAML precompiled contract
    */
-  public static String getNameSpace() {
+  public static String getDamlAccountAddress() {
     return DAML_PUBLIC_ACCOUNT;
   }
 
   /**
-   * Make a unique address comprised of a hashed root address and a count represented as an 8-byte
-   * hexadecimal string padded with leading zeros.
+   * Return the first four characters of a DAML storage slot key in ethereum given the key type, one
+   * of state key or log id.
    *
-   * @param rootAddress the root address
-   * @param count either the total number of parts about to be recorded in the ledger, or the number
-   *     of the current part
-   * @return the hash of the collected address
+   * @param keyType key type, one of state key or log id
+   * @return first four characters of DAML storage slot key for this key type
    */
-  public static Bytes makeAddress(final String rootAddress, final int count) {
-    String address = String.format("%s%08X", rootAddress, count);
-    return Bytes.of(address.getBytes(Charset.defaultCharset()));
+  public static String getDamlKeyRoot(final String keyType) {
+    return String.format("%s%s", getDamlAccountAddress(), keyType);
   }
 
   /**
-   * Make a unique address given a namespace and data.
+   * Make an ethereum storage slot address given a namespace and data.
    *
-   * @param ns the namespace byte string
+   * @param ns the namespace string
    * @param data the data
-   * @return the hash of the collected address
+   * @return 256-bit ethereum storage slot address
    */
-  public static String makeAddress(final String ns, final ByteString data) {
+  public static Bytes makeAddress(final String ns, final ByteString data) {
     String hash = getHash(data);
-    int begin = hash.length() - ADDRESS_HEX_STRING_LENGTH + ns.length() - 8;
+
+    // use only the last 28 bytes of the hash to allow room for the namespace
+    final int begin = hash.length() - STORAGE_SLOT_SIZE + ns.length();
     hash = hash.substring(begin);
-    return ns + hash;
+    return Bytes32.fromHexString(ns + hash);
   }
 
   /**
-   * Construct a context address for the ledger sync event with logical id eventId.
+   * Make an ethereum storage slot address given a DAML log entry id.
    *
    * @param entryId the log entry Id
    * @return the byte string address
    */
-  protected static String makeDamlLogEntryAddress(final DamlLogEntryId entryId) {
+  protected static Bytes makeDamlLogEntryAddress(final DamlLogEntryId entryId) {
     return makeAddress(DAML_NS_LOG_ENTRY, entryId.toByteString());
   }
 
   /**
-   * Construct a context address for the given DamlStateKey.
+   * Make an ethereum storage slot address given a DAL state key.
    *
    * @param key DamlStateKey to be used for the address
    * @return the string address
    */
-  protected static String makeDamlStateAddress(final DamlStateKey key) {
+  protected static Bytes makeDamlStateAddress(final DamlStateKey key) {
     return makeAddress(DAML_NS_STATE_VALUE, key.toByteString());
-  }
-
-  /**
-   * Return the number of ledger entries that were used to store the value associated with the
-   * supplied key.
-   *
-   * @param key ledger key
-   * @return number of ledger entries associated with the key
-   */
-  public static int getLedgerEntryPartCount(final Bytes key) {
-    return key.slice(ADDRESS_HEX_STRING_LENGTH - 8).toInt();
   }
 
   /**

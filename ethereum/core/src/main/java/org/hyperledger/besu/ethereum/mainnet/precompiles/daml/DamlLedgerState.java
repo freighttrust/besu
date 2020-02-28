@@ -18,6 +18,7 @@ import org.hyperledger.besu.ethereum.core.AccountStorageEntry;
 import org.hyperledger.besu.ethereum.core.MutableAccount;
 import org.hyperledger.besu.ethereum.rlp.RLP;
 
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -43,7 +44,6 @@ import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt256;
 
-@SuppressWarnings("unused")
 public class DamlLedgerState implements LedgerState {
   private static final Logger LOG = LogManager.getLogger();
 
@@ -74,7 +74,6 @@ public class DamlLedgerState implements LedgerState {
           .setCommandDedup(DamlCommandDedupValue.newBuilder().build())
           .build();
     }
-    // return KeyValueCommitting.unpackDamlStateValue(uncompressByteString(bs));
 
     final UInt256 ethKey = DamlLedgerState.toUInt256(key);
     final ByteBuffer buf = getLedgerEntry(ethKey);
@@ -118,27 +117,13 @@ public class DamlLedgerState implements LedgerState {
   }
 
   private ByteBuffer getLedgerEntry(final UInt256 key) {
-    final UInt256 first = account.getStorageValue(key);
-    int count = Namespace.getLedgerEntryPartCount(first.toBytes());
-
-    // now reconstitute RLP bytes from all ethereum slices created for this ledger entry
+    // reconstitute RLP bytes from all ethereum slices created for this ledger entry
     final Map<Bytes32, AccountStorageEntry> entryMap =
-        account.storageEntriesFrom(key.toBytes(), count);
-
-    // java 8 voodoo version
-    final Bytes rawRlp =
-        entryMap.values().stream()
-            .map(e -> (Bytes) e.getValue().toBytes())
-            .reduce(
-                Bytes.EMPTY,
-                (accumulatedBytes, bytesToConcatenate) ->
-                    Bytes.concatenate(accumulatedBytes, bytesToConcatenate));
-
-    // readable version
-    // Bytes rawRlp = Bytes.EMPTY;
-    // for (AccountStorageEntry e : entryMap.values()) {
-    //   rawRlp = Bytes.concatenate(rawRlp, e.getValue().toBytes());
-    // }
+        account.storageEntriesFrom(key.toBytes(), Integer.MAX_VALUE);
+    Bytes rawRlp = Bytes.EMPTY;
+    for (AccountStorageEntry e : entryMap.values()) {
+      rawRlp = Bytes.concatenate(rawRlp, e.getValue().toBytes());
+    }
 
     final Bytes entry = RLP.decodeOne(rawRlp);
     if (!entry.isEmpty() || entry.isZero()) {
@@ -170,37 +155,31 @@ public class DamlLedgerState implements LedgerState {
   }
 
   /**
-   * Add the supplied data to the ledger, in multiple parts if necessary.
+   * Add the supplied data to the ledger, starting at the supplied ethereum storage slot address.
    *
-   * @param rootAddress hashed address minus the 8 bytes we use to encode the number of parts used
-   *     to store the entry
+   * @param rootAddress 256-bit ethereum storage slot address
    * @param entry value to store in the ledger
-   * @return unsigned 256-bit representation of the address of the first part
    */
-  private UInt256 addLedgerEntry(final String rootAddress, final ByteString entry) {
+  private void addLedgerEntry(final Bytes rootAddress, final ByteString entry) {
     // RLP-encode the entry
     final Bytes encoded = RLP.encodeOne(Bytes.of(entry.toByteArray()));
-    final int partCount = encoded.size() / Namespace.ADDRESS_HEX_STRING_LENGTH + 1;
 
-    // store the first part of the entry with total number of parts encoded
-    Bytes data = encoded.slice(0, Namespace.ADDRESS_HEX_STRING_LENGTH);
-    Bytes address = Namespace.makeAddress(rootAddress, partCount);
-    account.setStorageValue(UInt256.fromBytes(address), UInt256.fromBytes(data));
-    final Bytes baseAddress = address;
+    // store the first part of the entry
+    Bytes data = encoded.slice(0, Namespace.STORAGE_SLOT_SIZE);
+    Bytes slot = rootAddress;
+    account.setStorageValue(UInt256.fromBytes(slot), UInt256.fromBytes(data));
 
-    // store remaining parts, if any
-    int offset = Namespace.ADDRESS_HEX_STRING_LENGTH;
-    int index = 2;
+    // Store remaining parts, if any. We ensure that the data is stored in consecutive
+    // ethereum storage slots by incrementing the slot by one each time
+    int offset = Namespace.STORAGE_SLOT_SIZE;
     while (offset < encoded.size()) {
-      int length = Math.min(Namespace.ADDRESS_HEX_STRING_LENGTH, encoded.size() - offset);
+      int length = Math.min(Namespace.STORAGE_SLOT_SIZE, encoded.size() - offset);
       data = encoded.slice(offset, length);
-      address = Namespace.makeAddress(rootAddress, index);
-      account.setStorageValue(UInt256.fromBytes(address), UInt256.fromBytes(data));
+      slot = Bytes.of(slot.toBigInteger().add(BigInteger.ONE).toByteArray());
+      account.setStorageValue(UInt256.fromBytes(slot), UInt256.fromBytes(data));
 
-      index++;
-      offset += Namespace.ADDRESS_HEX_STRING_LENGTH;
+      offset += Namespace.STORAGE_SLOT_SIZE;
     }
-    return UInt256.fromBytes(baseAddress);
   }
 
   @Override
@@ -211,7 +190,7 @@ public class DamlLedgerState implements LedgerState {
         key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)
             ? packedKey
             : KeyValueCommitting.packDamlStateValue(value);
-    final String rootAddress = Namespace.makeAddress(Namespace.DAML_NS_STATE_VALUE, packedKey);
+    final Bytes rootAddress = Namespace.makeAddress(Namespace.DAML_NS_STATE_VALUE, packedKey);
     addLedgerEntry(rootAddress, packedValue);
   }
 
@@ -225,8 +204,9 @@ public class DamlLedgerState implements LedgerState {
   public UInt256 addDamlLogEntry(final DamlLogEntryId entryId, final DamlLogEntry entry)
       throws InternalError {
     final ByteString packedEntryId = KeyValueCommitting.packDamlLogEntryId(entryId);
-    final String rootAddress = Namespace.makeAddress(Namespace.DAML_NS_LOG_ENTRY, packedEntryId);
-    return addLedgerEntry(rootAddress, KeyValueCommitting.packDamlLogEntry(entry));
+    final Bytes rootAddress = Namespace.makeAddress(Namespace.DAML_NS_LOG_ENTRY, packedEntryId);
+    addLedgerEntry(rootAddress, KeyValueCommitting.packDamlLogEntry(entry));
+    return UInt256.fromBytes(rootAddress);
   }
 
   @Override
@@ -238,6 +218,7 @@ public class DamlLedgerState implements LedgerState {
   @Override
   public Timestamp getRecordTime() throws InternalError {
     // throw new InternalError("Method not implemented");
+    // TODO figure out if and then how we should do this
     return Timestamp.getDefaultInstance();
   }
 

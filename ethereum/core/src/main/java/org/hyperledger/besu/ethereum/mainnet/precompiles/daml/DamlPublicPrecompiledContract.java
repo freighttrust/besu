@@ -14,7 +14,6 @@
  */
 package org.hyperledger.besu.ethereum.mainnet.precompiles.daml;
 
-import org.hyperledger.besu.ethereum.chain.Blockchain;
 import org.hyperledger.besu.ethereum.core.Address;
 import org.hyperledger.besu.ethereum.core.Gas;
 import org.hyperledger.besu.ethereum.core.Log;
@@ -22,7 +21,6 @@ import org.hyperledger.besu.ethereum.core.LogTopic;
 import org.hyperledger.besu.ethereum.core.MutableAccount;
 import org.hyperledger.besu.ethereum.core.WorldUpdater;
 import org.hyperledger.besu.ethereum.mainnet.AbstractPrecompiledContract;
-import org.hyperledger.besu.ethereum.vm.Code;
 import org.hyperledger.besu.ethereum.vm.GasCalculator;
 import org.hyperledger.besu.ethereum.vm.MessageFrame;
 import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
@@ -32,7 +30,6 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -90,14 +87,9 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
   }
 
   @Override
-  @SuppressWarnings("unused")
   public Bytes compute(final Bytes input, final MessageFrame messageFrame) {
     final WorldUpdater updater = messageFrame.getWorldState();
     final MutableAccount account = updater.getAccount(Address.DAML_PUBLIC).getMutable();
-    final LedgerState ledgerState = new DamlLedgerState(account);
-    final Blockchain blockchain = messageFrame.getBlockchain();
-    final Code code = messageFrame.getCode();
-    final List<Log> logs = messageFrame.getLogs();
     final Type type = messageFrame.getType();
 
     LOG.trace(
@@ -107,36 +99,25 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
             account,
             type,
             stackTrace(Thread.currentThread().getStackTrace())));
+
+    final LedgerState ledgerState = new DamlLedgerState(account);
     try {
       byte[] data = Base64.getDecoder().decode(String.valueOf(input));
+      LOG.debug(String.format("Base64 decoded bytes [%s]", Bytes.of(data).toHexString()));
+
       DamlOperation operation = DamlOperation.parseFrom(data);
+      LOG.debug(
+          String.format(
+              "Parsed DamlOperation protobuf %s [%s] from input [%s]",
+              JsonFormat.printer().print(operation),
+              Bytes.of(operation.toByteArray()).toHexString(),
+              input.toHexString()));
       if (operation.hasTransaction()) {
         DamlTransaction tx = operation.getTransaction();
-        DamlSubmission submission = KeyValueSubmission.unpackDamlSubmission(tx.getSubmission());
-        DamlLogEntryId entryId = KeyValueCommitting.unpackDamlLogEntryId(tx.getLogEntryId());
 
-        LOG.debug(
-            String.format(
-                "Parsed DamlOperation protobuf %s [%s] from input [%s]",
-                JsonFormat.printer().print(operation),
-                Bytes.of(operation.toByteArray()).toHexString(),
-                input.toHexString()));
+        DamlSubmission submission = KeyValueSubmission.unpackDamlSubmission(tx.getSubmission());
         String participantId = operation.getSubmittingParticipant();
-        LOG.debug(String.format("Participant id=[%s]", participantId));
-        LOG.debug(
-            String.format(
-                "Parsed DamlTransaction protobuf %s [%s]",
-                JsonFormat.printer().print(tx), Bytes.of(tx.toByteArray()).toHexString()));
-        LOG.debug(
-            String.format(
-                "Parsed DamlLogEntryId protobuf %s [%s]",
-                JsonFormat.printer().print(entryId),
-                Bytes.of(entryId.toByteArray()).toHexString()));
-        LOG.debug(
-            String.format(
-                "Parsed DamlSubmission protobuf %s [%s]",
-                JsonFormat.printer().print(submission),
-                Bytes.of(submission.toByteArray()).toHexString()));
+        DamlLogEntryId entryId = KeyValueCommitting.unpackDamlLogEntryId(tx.getLogEntryId());
 
         Bytes logEvent =
             processTransaction(ledgerState, submission, participantId, entryId, updater);
@@ -181,8 +162,8 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     long recordStateStart = System.currentTimeMillis();
     Bytes logEvent =
         recordState(ledgerState, submission, participantId, stateMap, entryId, updater);
-
     long processFinished = System.currentTimeMillis();
+
     long recordStateTime = processFinished - recordStateStart;
     long fetchStateTime = recordStateStart - fetchStateStart;
     LOG.info(
@@ -198,7 +179,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
       throws InvalidTransactionException, InternalError {
 
     LOG.debug(String.format("Fetching DamlState for this transaction"));
-    Map<DamlStateKey, String> inputDamlStateKeys =
+    Map<DamlStateKey, Bytes> inputDamlStateKeys =
         KeyValueUtils.submissionToDamlStateAddress(submission);
     if (inputDamlStateKeys.isEmpty()) {
       LOG.debug("No input DAML state keys");
@@ -216,7 +197,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         .forEach(
             key -> {
               KeyCase keyCase = key.getKeyCase();
-              String address = Namespace.makeDamlStateAddress(key);
+              Bytes address = Namespace.makeDamlStateAddress(key);
               DamlStateValue keyValue = inputStates.get(key);
               if (keyValue != null) {
                 Option<DamlStateValue> option = Option.apply(keyValue);
