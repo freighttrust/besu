@@ -27,11 +27,8 @@ import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
 
 import java.nio.charset.Charset;
 import java.time.Duration;
-import java.util.Arrays;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import com.blockchaintp.besu.daml.protobuf.DamlOperation;
 import com.blockchaintp.besu.daml.protobuf.DamlTransaction;
@@ -79,10 +76,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
   @Override
   public Gas gasRequirement(final Bytes input) {
-    LOG.trace(
-        String.format(
-            "In gasRequirement(input=%s) %s",
-            input.toHexString(), stackTrace(Thread.currentThread().getStackTrace())));
+    LOG.trace(String.format("In gasRequirement(input=%s)", input.toHexString()));
     return Gas.ZERO;
   }
 
@@ -94,16 +88,11 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
     LOG.trace(
         String.format(
-            "In compute(input=%s, target-account=%s, type=%s) %s",
-            input.toHexString(),
-            account,
-            type,
-            stackTrace(Thread.currentThread().getStackTrace())));
+            "In compute(input=%s, target-account=%s, type=%s)",
+            input.toHexString(), account, type));
 
     final LedgerState ledgerState = new DamlLedgerState(account);
     try {
-      LOG.debug(String.format("Base64 decoded bytes [%s]", input.toHexString()));
-
       DamlOperation operation = DamlOperation.parseFrom(input.toArray());
       LOG.debug(
           String.format(
@@ -177,17 +166,23 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
       final LedgerState ledgerState, final DamlSubmission submission)
       throws InvalidTransactionException, InternalError {
 
-    LOG.debug(String.format("Fetching DamlState for this transaction"));
+    LOG.debug(String.format("Fetching DAML state keys for this submission"));
     Map<DamlStateKey, Bytes> inputDamlStateKeys =
         KeyValueUtils.submissionToDamlStateAddress(submission);
     if (inputDamlStateKeys.isEmpty()) {
-      LOG.debug("No input DAML state keys");
+      LOG.debug("No DAML state keys in input");
+    } else {
+      inputDamlStateKeys.forEach(
+          (k, v) -> LOG.debug(String.format("state key: [%s], native key: [%s]", k, v)));
     }
 
+    LOG.debug(String.format("Fetching DAML state values for this submission"));
     Map<DamlStateKey, DamlStateValue> inputStates =
         ledgerState.getDamlStates(inputDamlStateKeys.keySet());
     if (inputStates.isEmpty()) {
-      LOG.debug("No ledger DAML state keys/values");
+      LOG.debug("No DAML state values for input state keys");
+    } else {
+      inputStates.forEach((k, v) -> LOG.debug(String.format("state key: [%s], value: [%s]", k, v)));
     }
 
     Map<DamlStateKey, Option<DamlStateValue>> inputStatesWithOption = new HashMap<>();
@@ -276,7 +271,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
             "Record state timings [ total=%s, process=%s, setState=%s ]",
             totalTime, processTime, setStateTime));
 
-    return Bytes.of(Base64.getEncoder().encode(newLogEntry.toByteArray()));
+    return Bytes.of(newLogEntry.toByteArray());
   }
 
   private Timestamp getRecordTime(final LedgerState ledgerState) throws InternalError {
@@ -295,16 +290,5 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     LOG.debug(String.format("Default TimeModel set to %s", tm));
     Configuration blankConfiguration = new Configuration(0, tm);
     return blankConfiguration;
-  }
-
-  private static String stackTrace(final StackTraceElement[] stes) {
-    final String PREFIX = "\n    at ";
-    return String.format(
-        "%s%s",
-        PREFIX,
-        Arrays.stream(stes)
-            .skip(1)
-            .map(StackTraceElement::toString)
-            .collect(Collectors.joining(PREFIX)));
   }
 }

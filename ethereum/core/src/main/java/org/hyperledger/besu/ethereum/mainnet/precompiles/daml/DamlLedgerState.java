@@ -36,7 +36,6 @@ import com.daml.ledger.participant.state.v1.TimeModel;
 import com.google.common.collect.Lists;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.MessageLite;
 import com.google.protobuf.Timestamp;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -53,29 +52,19 @@ public class DamlLedgerState implements LedgerState {
     this.account = theAccount;
   }
 
-  /**
-   * Returns a UInt256 representation of a protocol buffer message.
-   *
-   * @param value byte string
-   * @return UInt256 representation of byte string provided
-   */
-  private static UInt256 toUInt256(final MessageLite value) {
-    return UInt256.fromBytes(DamlLedgerState.toBytes(value));
-  }
-
-  private static Bytes toBytes(final MessageLite value) {
-    return Bytes.of(value.toByteArray());
-  }
-
   @Override
   public DamlStateValue getDamlState(final DamlStateKey key) throws InternalError {
+    LOG.debug(String.format("Getting DAML state for key [%s]", key));
     if (key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)) {
       return DamlStateValue.newBuilder()
           .setCommandDedup(DamlCommandDedupValue.newBuilder().build())
           .build();
     }
 
-    final UInt256 ethKey = DamlLedgerState.toUInt256(key);
+    final Bytes platformKey = Namespace.makeDamlStateAddress(key);
+    LOG.debug(String.format("DAML namespace address [%s]", platformKey.toHexString()));
+    final UInt256 ethKey = UInt256.fromBytes(platformKey);
+    LOG.debug(String.format("Ethereum key [%s]", ethKey.toHexString()));
     final ByteBuffer buf = getLedgerEntry(ethKey);
     try {
       return DamlStateValue.parseFrom(buf);
@@ -107,7 +96,10 @@ public class DamlLedgerState implements LedgerState {
 
   @Override
   public DamlLogEntry getDamlLogEntry(final DamlLogEntryId entryId) throws InternalError {
-    final UInt256 ethKey = DamlLedgerState.toUInt256(entryId);
+    LOG.debug(String.format("Getting DAML log entry for id [%s]", entryId));
+    final Bytes platformKey = Namespace.makeDamlLogEntryAddress(entryId);
+    final UInt256 ethKey = UInt256.fromBytes(platformKey);
+    LOG.debug(String.format("Ethereum key %s", ethKey.toHexString()));
     final ByteBuffer buf = getLedgerEntry(ethKey);
     try {
       return DamlLogEntry.parseFrom(buf);
@@ -120,8 +112,13 @@ public class DamlLedgerState implements LedgerState {
     // reconstitute RLP bytes from all ethereum slices created for this ledger entry
     final Map<Bytes32, AccountStorageEntry> entryMap =
         account.storageEntriesFrom(key.toBytes(), Integer.MAX_VALUE);
+    if (entryMap.isEmpty()) {
+      throw new InternalError(
+          String.format("Ethereum key %s does not point to allocated storage", key.toHexString()));
+    }
+
     Bytes rawRlp = Bytes.EMPTY;
-    for (AccountStorageEntry e : entryMap.values()) {
+    for (final AccountStorageEntry e : entryMap.values()) {
       rawRlp = Bytes.concatenate(rawRlp, e.getValue().toBytes());
     }
 
@@ -169,11 +166,12 @@ public class DamlLedgerState implements LedgerState {
     Bytes slot = rootAddress;
     account.setStorageValue(UInt256.fromBytes(slot), UInt256.fromBytes(data));
 
-    // Store remaining parts, if any. We ensure that the data is stored in consecutive
+    // Store remaining parts, if any. We ensure that the data is stored in
+    // consecutive
     // ethereum storage slots by incrementing the slot by one each time
     int offset = Namespace.STORAGE_SLOT_SIZE;
     while (offset < encoded.size()) {
-      int length = Math.min(Namespace.STORAGE_SLOT_SIZE, encoded.size() - offset);
+      final int length = Math.min(Namespace.STORAGE_SLOT_SIZE, encoded.size() - offset);
       data = encoded.slice(offset, length);
       slot = Bytes.of(slot.toBigInteger().add(BigInteger.ONE).toByteArray());
       account.setStorageValue(UInt256.fromBytes(slot), UInt256.fromBytes(data));
