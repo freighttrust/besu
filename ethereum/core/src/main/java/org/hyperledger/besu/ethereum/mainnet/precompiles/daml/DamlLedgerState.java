@@ -190,7 +190,7 @@ public class DamlLedgerState implements LedgerState {
         key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)
             ? packedKey
             : KeyValueCommitting.packDamlStateValue(value);
-    final Bytes rootAddress = Namespace.makeAddress(Namespace.DAML_NS_STATE_VALUE, packedKey);
+    final Bytes rootAddress = Namespace.makeAddress(Namespace.DamlKeyType.STATE, packedKey);
     addLedgerEntry(rootAddress, packedValue);
   }
 
@@ -204,7 +204,7 @@ public class DamlLedgerState implements LedgerState {
   public UInt256 addDamlLogEntry(final DamlLogEntryId entryId, final DamlLogEntry entry)
       throws InternalError {
     final ByteString packedEntryId = KeyValueCommitting.packDamlLogEntryId(entryId);
-    final Bytes rootAddress = Namespace.makeAddress(Namespace.DAML_NS_LOG_ENTRY, packedEntryId);
+    final Bytes rootAddress = Namespace.makeAddress(Namespace.DamlKeyType.LOG, packedEntryId);
     addLedgerEntry(rootAddress, KeyValueCommitting.packDamlLogEntry(entry));
     return UInt256.fromBytes(rootAddress);
   }

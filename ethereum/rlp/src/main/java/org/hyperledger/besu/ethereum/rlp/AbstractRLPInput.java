@@ -286,7 +286,7 @@ abstract class AbstractRLPInput implements RLPInput {
 
   @Override
   public long readLongScalar() {
-    checkScalar("long scalar", 8);
+    // checkScalar("long scalar", 8);
     long res = 0;
     int shift = 0;
     for (int i = 0; i < currentPayloadSize; i++) {
@@ -302,7 +302,7 @@ abstract class AbstractRLPInput implements RLPInput {
 
   @Override
   public int readIntScalar() {
-    checkScalar("int scalar", 4);
+    // checkScalar("int scalar", 4);
     int res = 0;
     int shift = 0;
     for (int i = 0; i < currentPayloadSize; i++) {

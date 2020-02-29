@@ -43,11 +43,28 @@ public final class Namespace {
   public static final String DAML_PUBLIC_ACCOUNT =
       String.format("%02x", Address.DAML_PUBLIC.toBigInteger());
 
-  /** Address space for DamlStateValues. */
-  public static final String DAML_NS_STATE_VALUE = getDamlKeyRoot("00");
+  /** Enumeration that maps a DAML key type to a four-character DAML root address. */
+  public enum DamlKeyType {
+    /** DAML state value. */
+    STATE,
+    /** DAML log entry. */
+    LOG;
 
-  /** Address space for Log Entries. */
-  public static final String DAML_NS_LOG_ENTRY = getDamlKeyRoot("01");
+    private final String rootAddress;
+
+    private DamlKeyType() {
+      rootAddress = String.format("%s%02d", getDamlAccountAddress(), ordinal());
+    }
+
+    /**
+     * Return the 4-character DAML root address for this DAML key type.
+     *
+     * @return DAML root address
+     */
+    public String rootAddress() {
+      return rootAddress;
+    }
+  }
 
   /**
    * Return the ethereum address of the DAML precompiled contract.
@@ -59,14 +76,19 @@ public final class Namespace {
   }
 
   /**
-   * Return the first four characters of a DAML storage slot key in ethereum given the key type, one
-   * of state key or log id.
+   * Make an ethereum storage slot address given a namespace and data.
    *
-   * @param keyType key type, one of state key or log id
-   * @return first four characters of DAML storage slot key for this key type
+   * @param ns the namespace string
+   * @param data the data
+   * @return 256-bit ethereum storage slot address
    */
-  public static String getDamlKeyRoot(final String keyType) {
-    return String.format("%s%s", getDamlAccountAddress(), keyType);
+  public static Bytes makeAddress(final DamlKeyType key, final byte[] data) {
+    String hash = getHash(data);
+
+    // use only the last 28 bytes of the hash to allow room for the namespace
+    final int begin = hash.length() - (STORAGE_SLOT_SIZE * 2) + key.rootAddress().length();
+    hash = hash.substring(begin);
+    return Bytes32.fromHexString(key.rootAddress() + hash);
   }
 
   /**
@@ -76,23 +98,19 @@ public final class Namespace {
    * @param data the data
    * @return 256-bit ethereum storage slot address
    */
-  public static Bytes makeAddress(final String ns, final ByteString data) {
-    String hash = getHash(data);
-
-    // use only the last 28 bytes of the hash to allow room for the namespace
-    final int begin = hash.length() - STORAGE_SLOT_SIZE + ns.length();
-    hash = hash.substring(begin);
-    return Bytes32.fromHexString(ns + hash);
+  public static Bytes makeAddress(final DamlKeyType key, final Bytes data) {
+    return makeAddress(key, data.toArray());
   }
 
   /**
-   * Make an ethereum storage slot address given a DAML log entry id.
+   * Make an ethereum storage slot address given a namespace and data.
    *
-   * @param entryId the log entry Id
-   * @return the byte string address
+   * @param ns the namespace string
+   * @param data the data
+   * @return 256-bit ethereum storage slot address
    */
-  protected static Bytes makeDamlLogEntryAddress(final DamlLogEntryId entryId) {
-    return makeAddress(DAML_NS_LOG_ENTRY, entryId.toByteString());
+  public static Bytes makeAddress(final DamlKeyType key, final ByteString data) {
+    return makeAddress(key, data.toByteArray());
   }
 
   /**
@@ -101,18 +119,18 @@ public final class Namespace {
    * @param key DamlStateKey to be used for the address
    * @return the string address
    */
-  protected static Bytes makeDamlStateAddress(final DamlStateKey key) {
-    return makeAddress(DAML_NS_STATE_VALUE, key.toByteString());
+  public static Bytes makeDamlStateAddress(final DamlStateKey key) {
+    return makeAddress(DamlKeyType.STATE, key.toByteString());
   }
 
   /**
-   * For a given protocol buffer byte string return its SHA-512 hash.
+   * Make an ethereum storage slot address given a DAML log entry id.
    *
-   * @param arg the string
-   * @return the SHA-512 hash of the string
+   * @param entryId the log entry Id
+   * @return the byte string address
    */
-  public static String getHash(final ByteString arg) {
-    return getHash(arg.toByteArray());
+  public static Bytes makeDamlLogEntryAddress(final DamlLogEntryId entryId) {
+    return makeAddress(DamlKeyType.LOG, entryId.toByteString());
   }
 
   /**
@@ -122,7 +140,7 @@ public final class Namespace {
    * @return the SHA-512 hash of the byte array
    */
   @SuppressWarnings("DoNotInvokeMessageDigestDirectly")
-  private static String getHash(final byte[] arg) {
+  public static String getHash(final byte[] arg) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-512");
       digest.reset();
@@ -131,6 +149,26 @@ public final class Namespace {
     } catch (NoSuchAlgorithmException nsae) {
       throw new RuntimeException("SHA-512 algorithm not found. This should never happen!", nsae);
     }
+  }
+
+  /**
+   * For a given protocol buffer byte string return its SHA-512 hash.
+   *
+   * @param arg the bytes
+   * @return the SHA-512 hash of the bytes
+   */
+  public static String getHash(final ByteString arg) {
+    return getHash(arg.toByteArray());
+  }
+
+  /**
+   * For a given set of bytes return its SHA-512 hash.
+   *
+   * @param arg the bytes
+   * @return the SHA-512 hash of the set of bytes
+   */
+  public static String getHash(final Bytes arg) {
+    return getHash(arg.toArray());
   }
 
   private Namespace() {}
