@@ -102,10 +102,9 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
     final LedgerState ledgerState = new DamlLedgerState(account);
     try {
-      byte[] data = Base64.getDecoder().decode(String.valueOf(input));
-      LOG.debug(String.format("Base64 decoded bytes [%s]", Bytes.of(data).toHexString()));
+      LOG.debug(String.format("Base64 decoded bytes [%s]", input.toHexString()));
 
-      DamlOperation operation = DamlOperation.parseFrom(data);
+      DamlOperation operation = DamlOperation.parseFrom(input.toArray());
       LOG.debug(
           String.format(
               "Parsed DamlOperation protobuf %s [%s] from input [%s]",
