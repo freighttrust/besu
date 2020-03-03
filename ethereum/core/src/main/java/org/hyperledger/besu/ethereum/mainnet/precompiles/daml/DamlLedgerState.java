@@ -64,6 +64,9 @@ public class DamlLedgerState implements LedgerState {
     final UInt256 platformKey = Namespace.makeDamlStateAddress(key);
     LOG.debug(String.format("DAML namespace address [%s]", platformKey.toHexString()));
     final ByteBuffer buf = getLedgerEntry(platformKey);
+    if ( buf == null ) {
+      return null;
+    }
     try {
       return DamlStateValue.parseFrom(buf);
     } catch (final InvalidProtocolBufferException ipbe) {
@@ -78,7 +81,10 @@ public class DamlLedgerState implements LedgerState {
     keys.forEach(
         key -> {
           try {
-            states.put(key, getDamlState(key));
+            DamlStateValue val=getDamlState(key);
+            if ( val != null) {
+              states.put(key, getDamlState(key));
+            }
           } catch (final InternalError e) {
             LOG.error("Failed to parse daml state:", e);
           }
@@ -98,6 +104,9 @@ public class DamlLedgerState implements LedgerState {
     final UInt256 platformKey = Namespace.makeDamlLogEntryAddress(entryId);
     LOG.debug(String.format("Ethereum key %s", platformKey.toHexString()));
     final ByteBuffer buf = getLedgerEntry(platformKey);
+    if (buf == null ) {
+      return null;
+    }
     try {
       return DamlLogEntry.parseFrom(buf);
     } catch (final InvalidProtocolBufferException ipbe) {
@@ -110,8 +119,7 @@ public class DamlLedgerState implements LedgerState {
     final Map<Bytes32, AccountStorageEntry> entryMap =
         account.storageEntriesFrom(key.toBytes(), Integer.MAX_VALUE);
     if (entryMap.isEmpty()) {
-      throw new InternalError(
-          String.format("Ethereum key %s does not point to allocated storage", key.toHexString()));
+      return null;
     }
 
     Bytes rawRlp = Bytes.EMPTY;
@@ -134,7 +142,10 @@ public class DamlLedgerState implements LedgerState {
     ids.forEach(
         id -> {
           try {
-            logs.put(id, getDamlLogEntry(id));
+            DamlLogEntry entry = getDamlLogEntry(id);
+            if ( entry != null ) {
+              logs.put(id, getDamlLogEntry(id));
+            }
           } catch (final InternalError e) {
             LOG.error("Failed to parse daml log entry:", e);
           }
