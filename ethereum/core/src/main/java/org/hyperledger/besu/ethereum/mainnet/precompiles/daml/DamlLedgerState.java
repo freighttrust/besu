@@ -170,7 +170,8 @@ public class DamlLedgerState implements LedgerState {
     final Bytes encoded = RLP.encodeOne(Bytes.of(entry.toByteArray()));
 
     // store the first part of the entry
-    Bytes data = encoded.slice(0, Namespace.STORAGE_SLOT_SIZE);
+    int sliceSz = Math.min(Namespace.STORAGE_SLOT_SIZE, encoded.size());
+    Bytes data = encoded.slice(0, sliceSz);
     UInt256 slot = rootAddress;
     account.setStorageValue(slot, UInt256.fromBytes(data));
 
