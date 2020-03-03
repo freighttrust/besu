@@ -25,6 +25,7 @@ import org.hyperledger.besu.ethereum.vm.GasCalculator;
 import org.hyperledger.besu.ethereum.vm.MessageFrame;
 import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.time.Duration;
 import java.util.HashMap;
@@ -52,6 +53,7 @@ import com.google.protobuf.util.Timestamps;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt256;
 
 import scala.Option;
@@ -111,8 +113,12 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
         Bytes logEvent =
             processTransaction(ledgerState, submission, participantId, entryId, updater);
+        if ( logEvent.size() < Bytes32.SIZE) {
+          logEvent = Bytes32.rightPad(logEvent);
+        }
         messageFrame.addLog(
             new Log(Address.DAML_PUBLIC, logEvent, Lists.newArrayList(DAML_LOG_TOPIC)));
+        return logEvent;
       } else {
         LOG.debug("DamlOperation DOES NOT contain a transaction, ignoring ...");
       }
