@@ -25,6 +25,7 @@ import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlStateKey;
 import com.google.protobuf.ByteString;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
+import org.apache.tuweni.units.bigints.UInt256;
 
 /** Utility class dealing with DAML namespace functions and values. */
 public final class Namespace {
@@ -82,13 +83,13 @@ public final class Namespace {
    * @param data the data
    * @return 256-bit ethereum storage slot address
    */
-  public static Bytes makeAddress(final DamlKeyType key, final byte[] data) {
+  public static UInt256 makeAddress(final DamlKeyType key, final byte[] data) {
     String hash = getHash(data);
 
     // use only the last 28 bytes of the hash to allow room for the namespace
     final int begin = hash.length() - (STORAGE_SLOT_SIZE * 2) + key.rootAddress().length();
     hash = hash.substring(begin);
-    return Bytes32.fromHexString(key.rootAddress() + hash);
+    return UInt256.fromHexString(key.rootAddress() + hash);
   }
 
   /**
@@ -98,7 +99,7 @@ public final class Namespace {
    * @param data the data
    * @return 256-bit ethereum storage slot address
    */
-  public static Bytes makeAddress(final DamlKeyType key, final Bytes data) {
+  public static UInt256 makeAddress(final DamlKeyType key, final Bytes data) {
     return makeAddress(key, data.toArray());
   }
 
@@ -109,7 +110,7 @@ public final class Namespace {
    * @param data the data
    * @return 256-bit ethereum storage slot address
    */
-  public static Bytes makeAddress(final DamlKeyType key, final ByteString data) {
+  public static UInt256 makeAddress(final DamlKeyType key, final ByteString data) {
     return makeAddress(key, data.toByteArray());
   }
 
@@ -119,7 +120,7 @@ public final class Namespace {
    * @param key DamlStateKey to be used for the address
    * @return the string address
    */
-  public static Bytes makeDamlStateAddress(final DamlStateKey key) {
+  public static UInt256 makeDamlStateAddress(final DamlStateKey key) {
     return makeAddress(DamlKeyType.STATE, key.toByteString());
   }
 
@@ -129,7 +130,7 @@ public final class Namespace {
    * @param entryId the log entry Id
    * @return the byte string address
    */
-  public static Bytes makeDamlLogEntryAddress(final DamlLogEntryId entryId) {
+  public static UInt256 makeDamlLogEntryAddress(final DamlLogEntryId entryId) {
     return makeAddress(DamlKeyType.LOG, entryId.toByteString());
   }
 

@@ -61,11 +61,9 @@ public class DamlLedgerState implements LedgerState {
           .build();
     }
 
-    final Bytes platformKey = Namespace.makeDamlStateAddress(key);
+    final UInt256 platformKey = Namespace.makeDamlStateAddress(key);
     LOG.debug(String.format("DAML namespace address [%s]", platformKey.toHexString()));
-    final UInt256 ethKey = UInt256.fromBytes(platformKey);
-    LOG.debug(String.format("Ethereum key [%s]", ethKey.toHexString()));
-    final ByteBuffer buf = getLedgerEntry(ethKey);
+    final ByteBuffer buf = getLedgerEntry(platformKey);
     try {
       return DamlStateValue.parseFrom(buf);
     } catch (final InvalidProtocolBufferException ipbe) {
@@ -97,10 +95,9 @@ public class DamlLedgerState implements LedgerState {
   @Override
   public DamlLogEntry getDamlLogEntry(final DamlLogEntryId entryId) throws InternalError {
     LOG.debug(String.format("Getting DAML log entry for id [%s]", entryId));
-    final Bytes platformKey = Namespace.makeDamlLogEntryAddress(entryId);
-    final UInt256 ethKey = UInt256.fromBytes(platformKey);
-    LOG.debug(String.format("Ethereum key %s", ethKey.toHexString()));
-    final ByteBuffer buf = getLedgerEntry(ethKey);
+    final UInt256 platformKey = Namespace.makeDamlLogEntryAddress(entryId);
+    LOG.debug(String.format("Ethereum key %s", platformKey.toHexString()));
+    final ByteBuffer buf = getLedgerEntry(platformKey);
     try {
       return DamlLogEntry.parseFrom(buf);
     } catch (final InvalidProtocolBufferException ipbe) {
@@ -157,14 +154,14 @@ public class DamlLedgerState implements LedgerState {
    * @param rootAddress 256-bit ethereum storage slot address
    * @param entry value to store in the ledger
    */
-  private void addLedgerEntry(final Bytes rootAddress, final ByteString entry) {
+  private void addLedgerEntry(final UInt256 rootAddress, final ByteString entry) {
     // RLP-encode the entry
     final Bytes encoded = RLP.encodeOne(Bytes.of(entry.toByteArray()));
 
     // store the first part of the entry
     Bytes data = encoded.slice(0, Namespace.STORAGE_SLOT_SIZE);
-    Bytes slot = rootAddress;
-    account.setStorageValue(UInt256.fromBytes(slot), UInt256.fromBytes(data));
+    UInt256 slot = rootAddress;
+    account.setStorageValue(slot, UInt256.fromBytes(data));
 
     // Store remaining parts, if any. We ensure that the data is stored in
     // consecutive
@@ -173,8 +170,8 @@ public class DamlLedgerState implements LedgerState {
     while (offset < encoded.size()) {
       final int length = Math.min(Namespace.STORAGE_SLOT_SIZE, encoded.size() - offset);
       data = encoded.slice(offset, length);
-      slot = Bytes.of(slot.toBigInteger().add(BigInteger.ONE).toByteArray());
-      account.setStorageValue(UInt256.fromBytes(slot), UInt256.fromBytes(data));
+      slot = slot.add(1);
+      account.setStorageValue(slot, UInt256.fromBytes(data));
 
       offset += Namespace.STORAGE_SLOT_SIZE;
     }
@@ -188,7 +185,7 @@ public class DamlLedgerState implements LedgerState {
         key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)
             ? packedKey
             : KeyValueCommitting.packDamlStateValue(value);
-    final Bytes rootAddress = Namespace.makeAddress(Namespace.DamlKeyType.STATE, packedKey);
+    final UInt256 rootAddress = Namespace.makeAddress(Namespace.DamlKeyType.STATE, packedKey);
     addLedgerEntry(rootAddress, packedValue);
   }
 
@@ -202,9 +199,9 @@ public class DamlLedgerState implements LedgerState {
   public UInt256 addDamlLogEntry(final DamlLogEntryId entryId, final DamlLogEntry entry)
       throws InternalError {
     final ByteString packedEntryId = KeyValueCommitting.packDamlLogEntryId(entryId);
-    final Bytes rootAddress = Namespace.makeAddress(Namespace.DamlKeyType.LOG, packedEntryId);
+    final UInt256 rootAddress = Namespace.makeAddress(Namespace.DamlKeyType.LOG, packedEntryId);
     addLedgerEntry(rootAddress, KeyValueCommitting.packDamlLogEntry(entry));
-    return UInt256.fromBytes(rootAddress);
+    return rootAddress;
   }
 
   @Override

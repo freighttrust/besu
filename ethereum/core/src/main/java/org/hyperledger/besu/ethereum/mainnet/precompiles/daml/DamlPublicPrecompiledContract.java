@@ -52,6 +52,8 @@ import com.google.protobuf.util.Timestamps;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.units.bigints.UInt256;
+
 import scala.Option;
 import scala.Tuple2;
 
@@ -166,8 +168,8 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
       final LedgerState ledgerState, final DamlSubmission submission)
       throws InvalidTransactionException, InternalError {
 
-    LOG.debug(String.format("Fetching DAML state keys for this submission"));
-    Map<DamlStateKey, Bytes> inputDamlStateKeys =
+    LOG.debug(String.format("Fetching DamlState for this transaction"));
+    Map<DamlStateKey, UInt256> inputDamlStateKeys =
         KeyValueUtils.submissionToDamlStateAddress(submission);
     if (inputDamlStateKeys.isEmpty()) {
       LOG.debug("No DAML state keys in input");
@@ -191,7 +193,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         .forEach(
             key -> {
               KeyCase keyCase = key.getKeyCase();
-              Bytes address = Namespace.makeDamlStateAddress(key);
+              UInt256 address = Namespace.makeDamlStateAddress(key);
               DamlStateValue keyValue = inputStates.get(key);
               if (keyValue != null) {
                 Option<DamlStateValue> option = Option.apply(keyValue);
