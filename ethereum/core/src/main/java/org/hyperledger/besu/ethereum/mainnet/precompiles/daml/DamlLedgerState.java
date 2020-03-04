@@ -18,7 +18,6 @@ import org.hyperledger.besu.ethereum.core.AccountStorageEntry;
 import org.hyperledger.besu.ethereum.core.MutableAccount;
 import org.hyperledger.besu.ethereum.rlp.RLP;
 
-import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -54,23 +53,25 @@ public class DamlLedgerState implements LedgerState {
 
   @Override
   public DamlStateValue getDamlState(final DamlStateKey key) throws InternalError {
-    LOG.debug(String.format("Getting DAML state for key [%s]", key));
+    LOG.debug(String.format("Getting DAML state for key=[%s]", key));
     if (key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)) {
       return DamlStateValue.newBuilder()
           .setCommandDedup(DamlCommandDedupValue.newBuilder().build())
           .build();
     }
 
-    final UInt256 platformKey = Namespace.makeDamlStateAddress(key);
-    LOG.debug(String.format("DAML namespace address [%s]", platformKey.toHexString()));
-    final ByteBuffer buf = getLedgerEntry(platformKey);
-    if ( buf == null ) {
+    final UInt256 address = Namespace.makeDamlStateKeyAddress(key);
+    LOG.debug(String.format("DAML state key address=[%s]", address.toHexString()));
+    final ByteBuffer buf = getLedgerEntry(address);
+    if (buf == null) {
+      LOG.debug(
+          String.format("No ledger entry for DAML state key address=[%s]", address.toHexString()));
       return null;
     }
     try {
       return DamlStateValue.parseFrom(buf);
     } catch (final InvalidProtocolBufferException ipbe) {
-      throw new InternalError("Failed to parse daml state", ipbe);
+      throw new InternalError("Failed to parse DAML state", ipbe);
     }
   }
 
@@ -81,12 +82,12 @@ public class DamlLedgerState implements LedgerState {
     keys.forEach(
         key -> {
           try {
-            DamlStateValue val=getDamlState(key);
-            if ( val != null) {
+            DamlStateValue val = getDamlState(key);
+            if (val != null) {
               states.put(key, getDamlState(key));
             }
           } catch (final InternalError e) {
-            LOG.error("Failed to parse daml state:", e);
+            LOG.error("Failed to parse DAML state:", e);
           }
         });
     return states;
@@ -100,11 +101,14 @@ public class DamlLedgerState implements LedgerState {
 
   @Override
   public DamlLogEntry getDamlLogEntry(final DamlLogEntryId entryId) throws InternalError {
-    LOG.debug(String.format("Getting DAML log entry for id [%s]", entryId));
-    final UInt256 platformKey = Namespace.makeDamlLogEntryAddress(entryId);
-    LOG.debug(String.format("Ethereum key %s", platformKey.toHexString()));
-    final ByteBuffer buf = getLedgerEntry(platformKey);
-    if (buf == null ) {
+    LOG.debug(String.format("Getting DAML log entry for id=[%s]", entryId));
+    final UInt256 address = Namespace.makeDamlLogEntryIdAddress(entryId);
+    LOG.debug(String.format("DAML log entry id address=[%s]", address.toHexString()));
+    final ByteBuffer buf = getLedgerEntry(address);
+    if (buf == null) {
+      LOG.debug(
+          String.format(
+              "No ledger entry for DAML log entry id address=[%s]", address.toHexString()));
       return null;
     }
     try {
@@ -143,7 +147,7 @@ public class DamlLedgerState implements LedgerState {
         id -> {
           try {
             DamlLogEntry entry = getDamlLogEntry(id);
-            if ( entry != null ) {
+            if (entry != null) {
               logs.put(id, getDamlLogEntry(id));
             }
           } catch (final InternalError e) {

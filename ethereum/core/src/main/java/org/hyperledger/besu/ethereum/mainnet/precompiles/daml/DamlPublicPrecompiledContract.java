@@ -25,7 +25,6 @@ import org.hyperledger.besu.ethereum.vm.GasCalculator;
 import org.hyperledger.besu.ethereum.vm.MessageFrame;
 import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
 
-import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.time.Duration;
 import java.util.HashMap;
@@ -55,7 +54,6 @@ import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt256;
-
 import scala.Option;
 import scala.Tuple2;
 
@@ -65,7 +63,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
   private static final String DAML_PUBLIC = "DamlPublic";
 
   private static final LogTopic DAML_LOG_TOPIC =
-      LogTopic.create(Bytes.of("daml/log-event".getBytes(Charset.defaultCharset())));
+      LogTopic.create(Namespace.getHash("daml/log-event".getBytes(Charset.defaultCharset())));
 
   private static final int DEFAULT_MAX_TTL = 80; // 4x TimeKeeper period
   private static final int DEFAULT_MAX_CLOCK_SKEW = 40; // 2x TimeKeeper period
@@ -100,10 +98,8 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
       DamlOperation operation = DamlOperation.parseFrom(input.toArray());
       LOG.debug(
           String.format(
-              "Parsed DamlOperation protobuf %s [%s] from input [%s]",
-              JsonFormat.printer().print(operation),
-              Bytes.of(operation.toByteArray()).toHexString(),
-              input.toHexString()));
+              "Parsed DamlOperation protobuf=%s from input=[%s]",
+              JsonFormat.printer().print(operation), input.toHexString()));
       if (operation.hasTransaction()) {
         DamlTransaction tx = operation.getTransaction();
 
@@ -113,7 +109,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
         Bytes logEvent =
             processTransaction(ledgerState, submission, participantId, entryId, updater);
-        if ( logEvent.size() < Bytes32.SIZE) {
+        if (logEvent.size() < Bytes32.SIZE) {
           logEvent = Bytes32.rightPad(logEvent);
         }
         messageFrame.addLog(
@@ -176,21 +172,22 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
     LOG.debug(String.format("Fetching DamlState for this transaction"));
     Map<DamlStateKey, UInt256> inputDamlStateKeys =
-        KeyValueUtils.submissionToDamlStateAddress(submission);
+        KeyValueUtils.submissionToDamlStateKeyAddress(submission);
     if (inputDamlStateKeys.isEmpty()) {
       LOG.debug("No DAML state keys in input");
     } else {
       inputDamlStateKeys.forEach(
-          (k, v) -> LOG.debug(String.format("state key: [%s], native key: [%s]", k, v)));
+          (k, v) ->
+              LOG.debug(String.format("state key=[%s], native key=[%s]", k, v.toHexString())));
     }
 
     LOG.debug(String.format("Fetching DAML state values for this submission"));
     Map<DamlStateKey, DamlStateValue> inputStates =
         ledgerState.getDamlStates(inputDamlStateKeys.keySet());
     if (inputStates.isEmpty()) {
-      LOG.debug("No DAML state values for input state keys");
+      LOG.debug("No DAML state values for this submission");
     } else {
-      inputStates.forEach((k, v) -> LOG.debug(String.format("state key: [%s], value: [%s]", k, v)));
+      inputStates.forEach((k, v) -> LOG.debug(String.format("state key=[%s], value=[%s]", k, v)));
     }
 
     Map<DamlStateKey, Option<DamlStateValue>> inputStatesWithOption = new HashMap<>();
@@ -199,7 +196,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         .forEach(
             key -> {
               KeyCase keyCase = key.getKeyCase();
-              UInt256 address = Namespace.makeDamlStateAddress(key);
+              UInt256 address = Namespace.makeDamlStateKeyAddress(key);
               DamlStateValue keyValue = inputStates.get(key);
               if (keyValue != null) {
                 Option<DamlStateValue> option = Option.apply(keyValue);
@@ -207,18 +204,20 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
                 if (keySize == 0) {
                   LOG.debug(
                       String.format(
-                          "Fetched %s(%s), address=%s, size=empty", key, keyCase, address));
+                          "Fetched key=[%s] (%s), address=[%s], size=empty",
+                          key, keyCase, address.toHexString()));
                 } else {
                   LOG.debug(
                       String.format(
-                          "Fetched %s(%s), address=%s, size=%s", key, keyCase, address, keySize));
+                          "Fetched key=[%s] (%s), address=[%s], size=%d",
+                          key, keyCase, address.toHexString(), keySize));
                 }
                 inputStatesWithOption.put(key, option);
               } else {
                 LOG.debug(
                     String.format(
-                        "Fetched %s(%s), address=%s, size=empty (not found in input states)",
-                        key, keyCase, address));
+                        "Fetched key=[%s] (%s), address=[%s], size=empty (not found in input states)",
+                        key, keyCase, address.toHexString()));
                 inputStatesWithOption.put(key, Option.empty());
               }
             });

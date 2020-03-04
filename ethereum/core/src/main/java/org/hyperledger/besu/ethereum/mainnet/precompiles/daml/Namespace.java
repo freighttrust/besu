@@ -14,11 +14,10 @@
  */
 package org.hyperledger.besu.ethereum.mainnet.precompiles.daml;
 
+import org.hyperledger.besu.crypto.Hash;
 import org.hyperledger.besu.ethereum.core.Address;
 
 import java.math.BigInteger;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlLogEntryId;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlStateKey;
@@ -84,23 +83,12 @@ public final class Namespace {
    * @return 256-bit ethereum storage slot address
    */
   public static UInt256 makeAddress(final DamlKeyType key, final byte[] data) {
-    String hash = getHash(data);
+    String hash = hashToString(getHash(data));
 
     // use only the last 28 bytes of the hash to allow room for the namespace
     final int begin = hash.length() - (STORAGE_SLOT_SIZE * 2) + key.rootAddress().length();
     hash = hash.substring(begin);
     return UInt256.fromHexString(key.rootAddress() + hash);
-  }
-
-  /**
-   * Make an ethereum storage slot address given a namespace and data.
-   *
-   * @param ns the namespace string
-   * @param data the data
-   * @return 256-bit ethereum storage slot address
-   */
-  public static UInt256 makeAddress(final DamlKeyType key, final Bytes data) {
-    return makeAddress(key, data.toArray());
   }
 
   /**
@@ -120,7 +108,7 @@ public final class Namespace {
    * @param key DamlStateKey to be used for the address
    * @return the string address
    */
-  public static UInt256 makeDamlStateAddress(final DamlStateKey key) {
+  public static UInt256 makeDamlStateKeyAddress(final DamlStateKey key) {
     return makeAddress(DamlKeyType.STATE, key.toByteString());
   }
 
@@ -130,46 +118,28 @@ public final class Namespace {
    * @param entryId the log entry Id
    * @return the byte string address
    */
-  public static UInt256 makeDamlLogEntryAddress(final DamlLogEntryId entryId) {
+  public static UInt256 makeDamlLogEntryIdAddress(final DamlLogEntryId entryId) {
     return makeAddress(DamlKeyType.LOG, entryId.toByteString());
   }
 
   /**
-   * For a given byte array return its SHA-512 hash.
+   * Return a SHA-256 hash of a byte array as a 32-byte Bytes wrapper.
    *
-   * @param arg the byte array
-   * @return the SHA-512 hash of the byte array
+   * @param input the byte array
+   * @return the SHA-256 hash of the byte array as a 64-character hexadecimal string
    */
-  @SuppressWarnings("DoNotInvokeMessageDigestDirectly")
-  public static String getHash(final byte[] arg) {
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-512");
-      digest.reset();
-      digest.update(arg);
-      return String.format("%0128x", new BigInteger(1, digest.digest()));
-    } catch (NoSuchAlgorithmException nsae) {
-      throw new RuntimeException("SHA-512 algorithm not found. This should never happen!", nsae);
-    }
+  public static Bytes getHash(final byte[] input) {
+    return Hash.sha256(Bytes.of(input));
   }
 
   /**
-   * For a given protocol buffer byte string return its SHA-512 hash.
+   * Return a 64-character hexadicaml string representation of a SHA-256 hash.
    *
-   * @param arg the bytes
-   * @return the SHA-512 hash of the bytes
+   * @param input the byte array
+   * @return the SHA-256 hash of the byte array as a 64-character hexadecimal string
    */
-  public static String getHash(final ByteString arg) {
-    return getHash(arg.toByteArray());
-  }
-
-  /**
-   * For a given set of bytes return its SHA-512 hash.
-   *
-   * @param arg the bytes
-   * @return the SHA-512 hash of the set of bytes
-   */
-  public static String getHash(final Bytes arg) {
-    return getHash(arg.toArray());
+  private static String hashToString(final Bytes hash) {
+    return String.format("%064x", new BigInteger(1, hash.toArray()));
   }
 
   private Namespace() {}
