@@ -18,7 +18,6 @@ import org.hyperledger.besu.ethereum.core.AccountStorageEntry;
 import org.hyperledger.besu.ethereum.core.MutableAccount;
 import org.hyperledger.besu.ethereum.rlp.RLP;
 
-import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -64,7 +63,7 @@ public class DamlLedgerState implements LedgerState {
     final UInt256 platformKey = Namespace.makeDamlStateAddress(key);
     LOG.debug(String.format("DAML namespace address [%s]", platformKey.toHexString()));
     final ByteBuffer buf = getLedgerEntry(platformKey);
-    if ( buf == null ) {
+    if (buf == null) {
       return null;
     }
     try {
@@ -81,8 +80,8 @@ public class DamlLedgerState implements LedgerState {
     keys.forEach(
         key -> {
           try {
-            DamlStateValue val=getDamlState(key);
-            if ( val != null) {
+            DamlStateValue val = getDamlState(key);
+            if (val != null) {
               states.put(key, getDamlState(key));
             }
           } catch (final InternalError e) {
@@ -101,10 +100,10 @@ public class DamlLedgerState implements LedgerState {
   @Override
   public DamlLogEntry getDamlLogEntry(final DamlLogEntryId entryId) throws InternalError {
     LOG.debug(String.format("Getting DAML log entry for id [%s]", entryId));
-    final UInt256 platformKey = Namespace.makeDamlLogEntryAddress(entryId);
+    final UInt256 platformKey = Namespace.makeDamlEntryIdAddress(entryId);
     LOG.debug(String.format("Ethereum key %s", platformKey.toHexString()));
     final ByteBuffer buf = getLedgerEntry(platformKey);
-    if (buf == null ) {
+    if (buf == null) {
       return null;
     }
     try {
@@ -143,7 +142,7 @@ public class DamlLedgerState implements LedgerState {
         id -> {
           try {
             DamlLogEntry entry = getDamlLogEntry(id);
-            if ( entry != null ) {
+            if (entry != null) {
               logs.put(id, getDamlLogEntry(id));
             }
           } catch (final InternalError e) {

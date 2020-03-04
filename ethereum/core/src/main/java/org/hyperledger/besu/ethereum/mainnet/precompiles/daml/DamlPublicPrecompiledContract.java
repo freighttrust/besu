@@ -25,7 +25,6 @@ import org.hyperledger.besu.ethereum.vm.GasCalculator;
 import org.hyperledger.besu.ethereum.vm.MessageFrame;
 import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
 
-import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.time.Duration;
 import java.util.HashMap;
@@ -55,7 +54,6 @@ import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt256;
-
 import scala.Option;
 import scala.Tuple2;
 
@@ -65,7 +63,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
   private static final String DAML_PUBLIC = "DamlPublic";
 
   private static final LogTopic DAML_LOG_TOPIC =
-      LogTopic.create(Bytes.of("daml/log-event".getBytes(Charset.defaultCharset())));
+      LogTopic.create(Namespace.getHash("daml/log-event".getBytes(Charset.defaultCharset())));
 
   private static final int DEFAULT_MAX_TTL = 80; // 4x TimeKeeper period
   private static final int DEFAULT_MAX_CLOCK_SKEW = 40; // 2x TimeKeeper period
@@ -113,7 +111,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
         Bytes logEvent =
             processTransaction(ledgerState, submission, participantId, entryId, updater);
-        if ( logEvent.size() < Bytes32.SIZE) {
+        if (logEvent.size() < Bytes32.SIZE) {
           logEvent = Bytes32.rightPad(logEvent);
         }
         messageFrame.addLog(
@@ -188,7 +186,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     Map<DamlStateKey, DamlStateValue> inputStates =
         ledgerState.getDamlStates(inputDamlStateKeys.keySet());
     if (inputStates.isEmpty()) {
-      LOG.debug("No DAML state values for input state keys");
+      LOG.debug("No DAML state values for this submission");
     } else {
       inputStates.forEach((k, v) -> LOG.debug(String.format("state key: [%s], value: [%s]", k, v)));
     }

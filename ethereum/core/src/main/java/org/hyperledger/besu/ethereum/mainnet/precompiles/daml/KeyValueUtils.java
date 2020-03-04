@@ -19,7 +19,6 @@ import java.util.Map;
 
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlStateKey;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlSubmission;
-
 import org.apache.tuweni.units.bigints.UInt256;
 
 /** A class providing utility static methods for use with DAML KeyValue participant-state. */
