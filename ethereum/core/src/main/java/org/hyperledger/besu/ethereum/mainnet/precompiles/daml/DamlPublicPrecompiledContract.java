@@ -112,6 +112,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         if (logEvent.size() < Bytes32.SIZE) {
           logEvent = Bytes32.rightPad(logEvent);
         }
+        LOG.info(String.format("Recording log entry under topic %s",DAML_LOG_TOPIC.toHexString()));
         messageFrame.addLog(
             new Log(Address.DAML_PUBLIC, logEvent, Lists.newArrayList(DAML_LOG_TOPIC)));
         return logEvent;
