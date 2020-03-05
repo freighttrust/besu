@@ -24,12 +24,14 @@ import org.hyperledger.besu.ethereum.mainnet.AbstractPrecompiledContract;
 import org.hyperledger.besu.ethereum.vm.GasCalculator;
 import org.hyperledger.besu.ethereum.vm.MessageFrame;
 import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
+import org.web3j.utils.Numeric;
 
 import java.nio.charset.Charset;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.blockchaintp.besu.daml.protobuf.DamlLogEvent;
 import com.blockchaintp.besu.daml.protobuf.DamlOperation;
 import com.blockchaintp.besu.daml.protobuf.DamlTransaction;
 import com.daml.ledger.participant.state.kvutils.Conversions;
@@ -86,20 +88,10 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
   public Bytes compute(final Bytes input, final MessageFrame messageFrame) {
     final WorldUpdater updater = messageFrame.getWorldState();
     final MutableAccount account = updater.getAccount(Address.DAML_PUBLIC).getMutable();
-    final Type type = messageFrame.getType();
-
-    LOG.trace(
-        String.format(
-            "In compute(input=%s, target-account=%s, type=%s)",
-            input.toHexString(), account, type));
 
     final LedgerState ledgerState = new DamlLedgerState(account);
     try {
       DamlOperation operation = DamlOperation.parseFrom(input.toArray());
-      LOG.debug(
-          String.format(
-              "Parsed DamlOperation protobuf=%s from input=[%s]",
-              JsonFormat.printer().print(operation), input.toHexString()));
       if (operation.hasTransaction()) {
         DamlTransaction tx = operation.getTransaction();
 
@@ -107,15 +99,15 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         String participantId = operation.getSubmittingParticipant();
         DamlLogEntryId entryId = KeyValueCommitting.unpackDamlLogEntryId(tx.getLogEntryId());
 
-        Bytes logEvent =
+        DamlLogEntry logEntry =
             processTransaction(ledgerState, submission, participantId, entryId, updater);
-        if (logEvent.size() < Bytes32.SIZE) {
-          logEvent = Bytes32.rightPad(logEvent);
-        }
+
+        DamlLogEvent event=DamlLogEvent.newBuilder().setLogEntry(KeyValueCommitting.packDamlLogEntry(logEntry))
+          .setLogEntryId(tx.getLogEntryId()).build();
         LOG.info(String.format("Recording log entry under topic %s",DAML_LOG_TOPIC.toHexString()));
         messageFrame.addLog(
-            new Log(Address.DAML_PUBLIC, logEvent, Lists.newArrayList(DAML_LOG_TOPIC)));
-        return logEvent;
+            new Log(Address.DAML_PUBLIC, Bytes.of(event.toByteArray()), Lists.newArrayList(DAML_LOG_TOPIC)));
+        return Bytes.of(event.toByteArray());
       } else {
         LOG.debug("DamlOperation DOES NOT contain a transaction, ignoring ...");
       }
@@ -131,11 +123,10 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
       LOG.error("Failed to parse DamlSubmission protocol buffer:", e);
     }
 
-    // TODO return bytes representation of entire log entry (not the log entry id)
     return Bytes.EMPTY;
   }
 
-  private Bytes processTransaction(
+  private DamlLogEntry processTransaction(
       final LedgerState ledgerState,
       final DamlSubmission submission,
       final String participantId,
@@ -153,7 +144,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     }
 
     long recordStateStart = System.currentTimeMillis();
-    Bytes logEvent =
+    DamlLogEntry logEntry =
         recordState(ledgerState, submission, participantId, stateMap, entryId, updater);
     long processFinished = System.currentTimeMillis();
 
@@ -164,7 +155,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
             "Finished processing transaction, times=[fetch=%s,record=%s]",
             fetchStateTime, recordStateTime));
 
-    return logEvent;
+    return logEntry;
   }
 
   private Map<DamlStateKey, Option<DamlStateValue>> buildStateMap(
@@ -225,7 +216,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     return inputStatesWithOption;
   }
 
-  private Bytes recordState(
+  private DamlLogEntry recordState(
       final LedgerState ledgerState,
       final DamlSubmission submission,
       final String participantId,
@@ -279,7 +270,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
             "Record state timings [ total=%s, process=%s, setState=%s ]",
             totalTime, processTime, setStateTime));
 
-    return Bytes.of(newLogEntry.toByteArray());
+    return newLogEntry;
   }
 
   private Timestamp getRecordTime(final LedgerState ledgerState) throws InternalError {
