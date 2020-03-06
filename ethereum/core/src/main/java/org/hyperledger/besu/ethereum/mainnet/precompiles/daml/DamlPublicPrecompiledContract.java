@@ -103,14 +103,12 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
                 .setLogEntry(KeyValueCommitting.packDamlLogEntry(logEntry))
                 .setLogEntryId(tx.getLogEntryId())
                 .build();
-        LOG.info(
-            String.format("Recording log entry under topic [%s]", DAML_LOG_TOPIC.toHexString()));
+        LOG.info(String.format("Recording log entry under topic %s", DAML_LOG_TOPIC.toHexString()));
         messageFrame.addLog(
             new Log(
                 Address.DAML_PUBLIC,
                 Bytes.of(logEvent.toByteArray()),
                 Lists.newArrayList(DAML_LOG_TOPIC)));
-        return Bytes.of(logEvent.toByteArray());
       } else {
         LOG.debug("DamlOperation DOES NOT contain a transaction, ignoring ...");
       }
