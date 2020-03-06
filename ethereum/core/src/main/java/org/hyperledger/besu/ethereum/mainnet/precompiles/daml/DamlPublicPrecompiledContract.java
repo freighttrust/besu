@@ -23,7 +23,6 @@ import org.hyperledger.besu.ethereum.core.WorldUpdater;
 import org.hyperledger.besu.ethereum.mainnet.AbstractPrecompiledContract;
 import org.hyperledger.besu.ethereum.vm.GasCalculator;
 import org.hyperledger.besu.ethereum.vm.MessageFrame;
-import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
 
 import java.nio.charset.Charset;
 import java.time.Duration;
@@ -48,7 +47,6 @@ import com.digitalasset.daml.lf.data.Time.Timestamp;
 import com.digitalasset.daml.lf.engine.Engine;
 import com.google.common.collect.Lists;
 import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.util.JsonFormat;
 import com.google.protobuf.util.Timestamps;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -86,20 +84,10 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
   public Bytes compute(final Bytes input, final MessageFrame messageFrame) {
     final WorldUpdater updater = messageFrame.getWorldState();
     final MutableAccount account = updater.getAccount(Address.DAML_PUBLIC).getMutable();
-    final Type type = messageFrame.getType();
-
-    LOG.trace(
-        String.format(
-            "In compute(input=%s, target-account=%s, type=%s)",
-            input.toHexString(), account, type));
 
     final LedgerState ledgerState = new DamlLedgerState(account);
     try {
       DamlOperation operation = DamlOperation.parseFrom(input.toArray());
-      LOG.debug(
-          String.format(
-              "Parsed DamlOperation protobuf=%s from input=[%s]",
-              JsonFormat.printer().print(operation), input.toHexString()));
       if (operation.hasTransaction()) {
         DamlTransaction tx = operation.getTransaction();
 
@@ -110,19 +98,18 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         DamlLogEntry logEntry =
             processTransaction(ledgerState, submission, participantId, entryId, updater);
 
-        DamlLogEvent logEvent =
+        DamlLogEvent event =
             DamlLogEvent.newBuilder()
                 .setLogEntry(KeyValueCommitting.packDamlLogEntry(logEntry))
                 .setLogEntryId(tx.getLogEntryId())
                 .build();
-        LOG.info(
-            String.format("Recording log entry under topic [%s]", DAML_LOG_TOPIC.toHexString()));
+        LOG.info(String.format("Recording log entry under topic %s", DAML_LOG_TOPIC.toHexString()));
         messageFrame.addLog(
             new Log(
                 Address.DAML_PUBLIC,
-                Bytes.of(logEvent.toByteArray()),
+                Bytes.of(event.toByteArray()),
                 Lists.newArrayList(DAML_LOG_TOPIC)));
-        return Bytes.of(logEvent.toByteArray());
+        return Bytes.of(event.toByteArray());
       } else {
         LOG.debug("DamlOperation DOES NOT contain a transaction, ignoring ...");
       }
