@@ -24,7 +24,6 @@ import org.hyperledger.besu.ethereum.mainnet.AbstractPrecompiledContract;
 import org.hyperledger.besu.ethereum.vm.GasCalculator;
 import org.hyperledger.besu.ethereum.vm.MessageFrame;
 import org.hyperledger.besu.ethereum.vm.MessageFrame.Type;
-import org.web3j.utils.Numeric;
 
 import java.nio.charset.Charset;
 import java.time.Duration;
@@ -54,7 +53,6 @@ import com.google.protobuf.util.Timestamps;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
-import org.apache.tuweni.bytes.Bytes32;
 import org.apache.tuweni.units.bigints.UInt256;
 import scala.Option;
 import scala.Tuple2;
@@ -112,12 +110,19 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         DamlLogEntry logEntry =
             processTransaction(ledgerState, submission, participantId, entryId, updater);
 
-        DamlLogEvent event=DamlLogEvent.newBuilder().setLogEntry(KeyValueCommitting.packDamlLogEntry(logEntry))
-          .setLogEntryId(tx.getLogEntryId()).build();
-        LOG.info(String.format("Recording log entry under topic %s",DAML_LOG_TOPIC.toHexString()));
+        DamlLogEvent logEvent =
+            DamlLogEvent.newBuilder()
+                .setLogEntry(KeyValueCommitting.packDamlLogEntry(logEntry))
+                .setLogEntryId(tx.getLogEntryId())
+                .build();
+        LOG.info(
+            String.format("Recording log entry under topic [%s]", DAML_LOG_TOPIC.toHexString()));
         messageFrame.addLog(
-            new Log(Address.DAML_PUBLIC, Bytes.of(event.toByteArray()), Lists.newArrayList(DAML_LOG_TOPIC)));
-        return Bytes.of(event.toByteArray());
+            new Log(
+                Address.DAML_PUBLIC,
+                Bytes.of(logEvent.toByteArray()),
+                Lists.newArrayList(DAML_LOG_TOPIC)));
+        return Bytes.of(logEvent.toByteArray());
       } else {
         LOG.debug("DamlOperation DOES NOT contain a transaction, ignoring ...");
       }

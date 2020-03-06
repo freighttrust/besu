@@ -40,10 +40,10 @@ public final class Namespace {
   public static final int STORAGE_SLOT_SIZE = Bytes32.SIZE;
 
   /** The ethereum address of the DAML precompiled contract. */
-  public static final String DAML_PUBLIC_ACCOUNT =
+  public static final String DAML_PUBLIC_ADDRESS =
       String.format("%02x", Address.DAML_PUBLIC.toBigInteger());
 
-  /** Enumeration that maps a DAML key type to a four-character DAML root address. */
+  /** Enumeration that maps a DAML key type to a four-hexadecimal-character ethereum storage root address. */
   public enum DamlKeyType {
     /** DAML state value. */
     STATE,
@@ -53,11 +53,11 @@ public final class Namespace {
     private final String rootAddress;
 
     private DamlKeyType() {
-      rootAddress = String.format("%s%02d", getDamlAccountAddress(), ordinal());
+      rootAddress = String.format("%s%02d", DAML_PUBLIC_ADDRESS, ordinal());
     }
 
     /**
-     * Return the 4-character DAML root address for this DAML key type.
+     * Return the 4-character etheruem storage root address for this DAML key type.
      *
      * @return DAML root address
      */
@@ -67,23 +67,23 @@ public final class Namespace {
   }
 
   /**
-   * Return the ethereum address of the DAML precompiled contract.
+   * Return the ethereum address prefix of the DAML precompiled contract.
    *
-   * @return ethereum address of DAML precompiled contract
+   * @return the ethereum address prefix of the DAML precompiled contract
    */
-  public static String getDamlAccountAddress() {
-    return DAML_PUBLIC_ACCOUNT;
+  public static String getDamlPublicAddress() {
+    return DAML_PUBLIC_ADDRESS;
   }
 
   /**
-   * Make an ethereum storage slot address given a namespace and data.
+   * Return a 256-bit ethereum storage address given a DAML storage key and data.
    *
-   * @param ns the namespace string
+   * @param key the DAML storage key
    * @param data the data
    * @return 256-bit ethereum storage slot address
    */
   public static UInt256 makeAddress(final DamlKeyType key, final byte[] data) {
-    String hash = hashToString(getHash(data));
+    String hash = hashToHexString(getHash(data));
 
     // use only the last 28 bytes of the hash to allow room for the namespace
     final int begin = hash.length() - (STORAGE_SLOT_SIZE * 2) + key.rootAddress().length();
@@ -92,9 +92,9 @@ public final class Namespace {
   }
 
   /**
-   * Make an ethereum storage slot address given a namespace and data.
+   * Return a 256-bit ethereum storage address given a DAML storage key and data.
    *
-   * @param ns the namespace string
+   * @param key the DAML storage key
    * @param data the data
    * @return 256-bit ethereum storage slot address
    */
@@ -103,7 +103,7 @@ public final class Namespace {
   }
 
   /**
-   * Make an ethereum storage slot address given a DAL state key.
+   * Return a 256-bit ethereum storage address given a DAL state key.
    *
    * @param key DamlStateKey to be used for the address
    * @return the string address
@@ -113,32 +113,32 @@ public final class Namespace {
   }
 
   /**
-   * Make an ethereum storage slot address given a DAML log entry id.
+   * Return a 256-bit ethereum storage address given a DAML log entry id.
    *
    * @param entryId the log entry Id
-   * @return the byte string address
+   * @return the address
    */
   public static UInt256 makeDamlLogEntryIdAddress(final DamlLogEntryId entryId) {
     return makeAddress(DamlKeyType.LOG, entryId.toByteString());
   }
 
   /**
-   * Return a SHA-256 hash of a byte array as a 32-byte Bytes wrapper.
+   * Return the SHA-256 hash of an array of bytes of arbitrary length.
    *
    * @param input the byte array
-   * @return the SHA-256 hash of the byte array as a 64-character hexadecimal string
+   * @return the SHA-256 hash of the byte array
    */
   public static Bytes getHash(final byte[] input) {
     return Hash.sha256(Bytes.of(input));
   }
 
   /**
-   * Return a 64-character hexadicaml string representation of a SHA-256 hash.
+   * Return the 64-character hexadecimal string representation of a SHA-256 hash.
    *
-   * @param input the byte array
-   * @return the SHA-256 hash of the byte array as a 64-character hexadecimal string
+   * @param input the hash
+   * @return the hexadecimal string representation of the hash
    */
-  private static String hashToString(final Bytes hash) {
+  private static String hashToHexString(final Bytes hash) {
     return String.format("%064x", new BigInteger(1, hash.toArray()));
   }
 
