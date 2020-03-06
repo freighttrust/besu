@@ -43,7 +43,10 @@ public final class Namespace {
   public static final String DAML_PUBLIC_ADDRESS =
       String.format("%02x", Address.DAML_PUBLIC.toBigInteger());
 
-  /** Enumeration that maps a DAML key type to a four-hexadecimal-character ethereum storage root address. */
+  /**
+   * Enumeration that maps a DAML key type to a 4-hexadecimal-character ethereum storage root
+   * address.
+   */
   public enum DamlKeyType {
     /** DAML state value. */
     STATE,
@@ -57,7 +60,7 @@ public final class Namespace {
     }
 
     /**
-     * Return the 4-character etheruem storage root address for this DAML key type.
+     * Return the 4-hexadecimal-character etheruem storage root address for this DAML key type.
      *
      * @return DAML root address
      */
@@ -67,7 +70,7 @@ public final class Namespace {
   }
 
   /**
-   * Return the ethereum address prefix of the DAML precompiled contract.
+   * Return the 2-hexadecimal-character ethereum address prefix of the DAML precompiled contract.
    *
    * @return the ethereum address prefix of the DAML precompiled contract
    */
