@@ -19,6 +19,7 @@ import org.hyperledger.besu.ethereum.core.MutableAccount;
 import org.hyperledger.besu.ethereum.rlp.RLP;
 
 import java.nio.ByteBuffer;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,17 +56,14 @@ public class DamlLedgerState implements LedgerState {
   public DamlStateValue getDamlState(final DamlStateKey key) throws InternalError {
     LOG.debug(String.format("Getting DAML state for key=[%s]", key));
     if (key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)) {
-      return DamlStateValue.newBuilder()
-          .setCommandDedup(DamlCommandDedupValue.newBuilder().build())
-          .build();
+      return DamlStateValue.newBuilder().setCommandDedup(DamlCommandDedupValue.newBuilder().build()).build();
     }
 
     final UInt256 address = Namespace.makeDamlStateKeyAddress(key);
     LOG.debug(String.format("DAML state key address=[%s]", address.toHexString()));
     final ByteBuffer buf = getLedgerEntry(address);
     if (buf == null) {
-      LOG.debug(
-          String.format("No ledger entry for DAML state key address=[%s]", address.toHexString()));
+      LOG.debug(String.format("No ledger entry for DAML state key address=[%s]", address.toHexString()));
       return null;
     }
     try {
@@ -76,26 +74,23 @@ public class DamlLedgerState implements LedgerState {
   }
 
   @Override
-  public Map<DamlStateKey, DamlStateValue> getDamlStates(final Collection<DamlStateKey> keys)
-      throws InternalError {
+  public Map<DamlStateKey, DamlStateValue> getDamlStates(final Collection<DamlStateKey> keys) throws InternalError {
     final Map<DamlStateKey, DamlStateValue> states = new LinkedHashMap<>();
-    keys.forEach(
-        key -> {
-          try {
-            DamlStateValue val = getDamlState(key);
-            if (val != null) {
-              states.put(key, getDamlState(key));
-            }
-          } catch (final InternalError e) {
-            LOG.error("Failed to parse DAML state:", e);
-          }
-        });
+    keys.forEach(key -> {
+      try {
+        DamlStateValue val = getDamlState(key);
+        if (val != null) {
+          states.put(key, getDamlState(key));
+        }
+      } catch (final InternalError e) {
+        LOG.error("Failed to parse DAML state:", e);
+      }
+    });
     return states;
   }
 
   @Override
-  public Map<DamlStateKey, DamlStateValue> getDamlStates(final DamlStateKey... keys)
-      throws InternalError {
+  public Map<DamlStateKey, DamlStateValue> getDamlStates(final DamlStateKey... keys) throws InternalError {
     return getDamlStates(Lists.newArrayList(keys));
   }
 
@@ -106,9 +101,7 @@ public class DamlLedgerState implements LedgerState {
     LOG.debug(String.format("DAML log entry id address=[%s]", address.toHexString()));
     final ByteBuffer buf = getLedgerEntry(address);
     if (buf == null) {
-      LOG.debug(
-          String.format(
-              "No ledger entry for DAML log entry id address=[%s]", address.toHexString()));
+      LOG.debug(String.format("No ledger entry for DAML log entry id address=[%s]", address.toHexString()));
       return null;
     }
     try {
@@ -120,8 +113,7 @@ public class DamlLedgerState implements LedgerState {
 
   private ByteBuffer getLedgerEntry(final UInt256 key) {
     // reconstitute RLP bytes from all ethereum slices created for this ledger entry
-    final Map<Bytes32, AccountStorageEntry> entryMap =
-        account.storageEntriesFrom(key.toBytes(), Integer.MAX_VALUE);
+    final Map<Bytes32, AccountStorageEntry> entryMap = account.storageEntriesFrom(key.toBytes(), Integer.MAX_VALUE);
     if (entryMap.isEmpty()) {
       return null;
     }
@@ -143,31 +135,30 @@ public class DamlLedgerState implements LedgerState {
   public Map<DamlLogEntryId, DamlLogEntry> getDamlLogEntries(final Collection<DamlLogEntryId> ids)
       throws InternalError {
     final Map<DamlLogEntryId, DamlLogEntry> logs = new LinkedHashMap<>();
-    ids.forEach(
-        id -> {
-          try {
-            DamlLogEntry entry = getDamlLogEntry(id);
-            if (entry != null) {
-              logs.put(id, getDamlLogEntry(id));
-            }
-          } catch (final InternalError e) {
-            LOG.error("Failed to parse daml log entry:", e);
-          }
-        });
+    ids.forEach(id -> {
+      try {
+        DamlLogEntry entry = getDamlLogEntry(id);
+        if (entry != null) {
+          logs.put(id, getDamlLogEntry(id));
+        }
+      } catch (final InternalError e) {
+        LOG.error("Failed to parse daml log entry:", e);
+      }
+    });
     return logs;
   }
 
   @Override
-  public Map<DamlLogEntryId, DamlLogEntry> getDamlLogEntries(final DamlLogEntryId... ids)
-      throws InternalError {
+  public Map<DamlLogEntryId, DamlLogEntry> getDamlLogEntries(final DamlLogEntryId... ids) throws InternalError {
     return getDamlLogEntries(Lists.newArrayList(ids));
   }
 
   /**
-   * Add the supplied data to the ledger, starting at the supplied ethereum storage slot address.
+   * Add the supplied data to the ledger, starting at the supplied ethereum
+   * storage slot address.
    *
    * @param rootAddress 256-bit ethereum storage slot address
-   * @param entry value to store in the ledger
+   * @param entry       value to store in the ledger
    */
   private void addLedgerEntry(final UInt256 rootAddress, final ByteString entry) {
     // RLP-encode the entry
@@ -194,26 +185,21 @@ public class DamlLedgerState implements LedgerState {
   }
 
   @Override
-  public void setDamlState(final DamlStateKey key, final DamlStateValue value)
-      throws InternalError {
+  public void setDamlState(final DamlStateKey key, final DamlStateValue value) throws InternalError {
     final ByteString packedKey = KeyValueCommitting.packDamlStateKey(key);
-    final ByteString packedValue =
-        key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)
-            ? packedKey
-            : KeyValueCommitting.packDamlStateValue(value);
+    final ByteString packedValue = key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP) ? packedKey
+        : KeyValueCommitting.packDamlStateValue(value);
     final UInt256 rootAddress = Namespace.makeAddress(Namespace.DamlKeyType.STATE, packedKey);
     addLedgerEntry(rootAddress, packedValue);
   }
 
   @Override
-  public void setDamlStates(final Collection<Entry<DamlStateKey, DamlStateValue>> entries)
-      throws InternalError {
+  public void setDamlStates(final Collection<Entry<DamlStateKey, DamlStateValue>> entries) throws InternalError {
     entries.forEach(e -> setDamlState(e.getKey(), e.getValue()));
   }
 
   @Override
-  public UInt256 addDamlLogEntry(final DamlLogEntryId entryId, final DamlLogEntry entry)
-      throws InternalError {
+  public UInt256 addDamlLogEntry(final DamlLogEntryId entryId, final DamlLogEntry entry) throws InternalError {
     final ByteString packedEntryId = KeyValueCommitting.packDamlLogEntryId(entryId);
     final UInt256 rootAddress = Namespace.makeAddress(Namespace.DamlKeyType.LOG, packedEntryId);
     addLedgerEntry(rootAddress, KeyValueCommitting.packDamlLogEntry(entry));
@@ -221,16 +207,15 @@ public class DamlLedgerState implements LedgerState {
   }
 
   @Override
-  public void sendLogEvent(final DamlLogEntryId entryId, final DamlLogEntry entry)
-      throws InternalError {
+  public void sendLogEvent(final DamlLogEntryId entryId, final DamlLogEntry entry) throws InternalError {
     throw new InternalError("Method not implemented");
   }
 
   @Override
   public Timestamp getRecordTime() throws InternalError {
-    // throw new InternalError("Method not implemented");
-    // TODO figure out if and then how we should do this
-    return Timestamp.getDefaultInstance();
+    Instant time = Instant.now();
+    Timestamp timestamp = Timestamp.newBuilder().setSeconds(time.getEpochSecond()).setNanos(time.getNano()).build();
+    return timestamp;
   }
 
   @Override
