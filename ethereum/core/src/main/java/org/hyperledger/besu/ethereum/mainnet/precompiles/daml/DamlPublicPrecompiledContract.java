@@ -109,6 +109,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
                 Address.DAML_PUBLIC,
                 Bytes.of(logEvent.toByteArray()),
                 Lists.newArrayList(DAML_LOG_TOPIC)));
+        updater.commit();
       } else {
         LOG.debug("DamlOperation DOES NOT contain a transaction, ignoring ...");
       }
