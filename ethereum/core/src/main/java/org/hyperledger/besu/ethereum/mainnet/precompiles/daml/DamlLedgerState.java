@@ -14,10 +14,6 @@
  */
 package org.hyperledger.besu.ethereum.mainnet.precompiles.daml;
 
-import org.hyperledger.besu.ethereum.core.AccountStorageEntry;
-import org.hyperledger.besu.ethereum.core.MutableAccount;
-import org.hyperledger.besu.ethereum.rlp.RLP;
-
 import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.Collection;
@@ -26,7 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
-import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlCommandDedupValue;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlLogEntry;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlLogEntryId;
 import com.daml.ledger.participant.state.kvutils.DamlKvutils.DamlStateKey;
@@ -37,11 +32,14 @@ import com.google.common.collect.Lists;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Timestamp;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
-import org.apache.tuweni.bytes.Bytes32;
+import org.apache.tuweni.bytes.MutableBytes32;
 import org.apache.tuweni.units.bigints.UInt256;
+import org.hyperledger.besu.ethereum.core.MutableAccount;
+import org.hyperledger.besu.ethereum.rlp.RLP;
 
 public class DamlLedgerState implements LedgerState {
   private static final Logger LOG = LogManager.getLogger();
@@ -55,9 +53,6 @@ public class DamlLedgerState implements LedgerState {
   @Override
   public DamlStateValue getDamlState(final DamlStateKey key) throws InternalError {
     LOG.debug(String.format("Getting DAML state for key=[%s]", key));
-    if (key.getKeyCase().equals(DamlStateKey.KeyCase.COMMAND_DEDUP)) {
-      return DamlStateValue.newBuilder().setCommandDedup(DamlCommandDedupValue.newBuilder().build()).build();
-    }
 
     final UInt256 address = Namespace.makeDamlStateKeyAddress(key);
     LOG.debug(String.format("DAML state key address=[%s]", address.toHexString()));
@@ -80,7 +75,7 @@ public class DamlLedgerState implements LedgerState {
       try {
         DamlStateValue val = getDamlState(key);
         if (val != null) {
-          states.put(key, getDamlState(key));
+          states.put(key, val);
         }
       } catch (final InternalError e) {
         LOG.error("Failed to parse DAML state:", e);
@@ -113,21 +108,26 @@ public class DamlLedgerState implements LedgerState {
 
   private ByteBuffer getLedgerEntry(final UInt256 key) {
     // reconstitute RLP bytes from all ethereum slices created for this ledger entry
-    final Map<Bytes32, AccountStorageEntry> entryMap = account.storageEntriesFrom(key.toBytes(), Integer.MAX_VALUE);
-    if (entryMap.isEmpty()) {
-      return null;
-    }
-
+    MutableBytes32 slot = key.toBytes().mutableCopy();
+    LOG.debug(String.format("Will fetch slices starting at rootKey=%s", slot.toHexString()));
+    UInt256 data = account.getOriginalStorageValue(UInt256.fromBytes(slot));
+    LOG.trace(String.format("Fetched data=%s", data.toHexString()));
+    int slices = 1;
     Bytes rawRlp = Bytes.EMPTY;
-    for (final AccountStorageEntry e : entryMap.values()) {
-      rawRlp = Bytes.concatenate(rawRlp, e.getValue().toBytes());
+    while (!data.isZero()) {
+      rawRlp = Bytes.concatenate(rawRlp, data.toBytes());
+      LOG.trace(String.format("So far rawRlp=%s", rawRlp.toHexString()));
+      slot.increment();
+      slices += 1;
+      data = account.getOriginalStorageValue(UInt256.fromBytes(slot));
+      LOG.trace(String.format("Fetched data=%s", data.toHexString()));
     }
-
-    final Bytes entry = RLP.decodeOne(rawRlp);
-    if (!entry.isEmpty() || entry.isZero()) {
+    LOG.debug(String.format("Fetched from rootKey=%s slices=%s size=%s", key.toHexString(), slices, rawRlp.size()));
+    if (rawRlp.size() != 0) {
+      final Bytes entry = RLP.decodeOne(rawRlp);
       return ByteBuffer.wrap(entry.toArray());
     } else {
-      throw new InternalError("Cannot parse empty daml ledger entry");
+      return null;
     }
   }
 
@@ -163,12 +163,17 @@ public class DamlLedgerState implements LedgerState {
   private void addLedgerEntry(final UInt256 rootAddress, final ByteString entry) {
     // RLP-encode the entry
     final Bytes encoded = RLP.encodeOne(Bytes.of(entry.toByteArray()));
-
+    MutableBytes32 slot = rootAddress.toBytes().mutableCopy();
+    LOG.debug(String.format("Writing starting at address=%s bytes=%s", rootAddress.toHexString(),
+        encoded.size()));
     // store the first part of the entry
     int sliceSz = Math.min(Namespace.STORAGE_SLOT_SIZE, encoded.size());
     Bytes data = encoded.slice(0, sliceSz);
-    UInt256 slot = rootAddress;
-    account.setStorageValue(slot, UInt256.fromBytes(data));
+    UInt256 part = UInt256.fromBytes(data);
+    int slices = 0;
+    account.setStorageValue(UInt256.fromBytes(slot), part);
+    LOG.trace(String.format("Wrote to address=%s slice=%s total bytes=%s", UInt256.fromBytes(slot).toHexString(),
+        slices, part.toHexString()));
 
     // Store remaining parts, if any. We ensure that the data is stored in
     // consecutive
@@ -177,11 +182,16 @@ public class DamlLedgerState implements LedgerState {
     while (offset < encoded.size()) {
       final int length = Math.min(Namespace.STORAGE_SLOT_SIZE, encoded.size() - offset);
       data = encoded.slice(offset, length);
-      slot = slot.add(1);
-      account.setStorageValue(slot, UInt256.fromBytes(data));
-
+      part = UInt256.fromBytes(data);
+      slot.increment();
+      slices++;
+      account.setStorageValue(UInt256.fromBytes(slot), UInt256.fromBytes(data));
+      LOG.trace(String.format("Wrote to address=%s slice=%s bytes=%s", UInt256.fromBytes(slot).toHexString(),
+          slices, part.toHexString()));
       offset += Namespace.STORAGE_SLOT_SIZE;
     }
+    LOG.debug(String.format("Wrote to address=%s slices=%s total size=%s", rootAddress.toHexString(), slices,
+        encoded.size()));
   }
 
   @Override
@@ -214,7 +224,12 @@ public class DamlLedgerState implements LedgerState {
   @Override
   public Timestamp getRecordTime() throws InternalError {
     Instant time = Instant.now();
-    Timestamp timestamp = Timestamp.newBuilder().setSeconds(time.getEpochSecond()).setNanos(time.getNano()).build();
+    // Reducing resolution to 10s for now
+    long ts = time.getEpochSecond() / 100L;
+    ts = ts * 100L;
+
+    Timestamp timestamp = Timestamp.newBuilder().setSeconds(ts).setNanos(0).build();
+    LOG.debug(String.format("Record Time = %s",timestamp.toString()));
     return timestamp;
   }
 

@@ -16,6 +16,7 @@ package org.hyperledger.besu.ethereum.mainnet.precompiles.daml;
 
 import org.hyperledger.besu.ethereum.core.Address;
 import org.hyperledger.besu.ethereum.core.Gas;
+import org.hyperledger.besu.ethereum.core.Hash;
 import org.hyperledger.besu.ethereum.core.Log;
 import org.hyperledger.besu.ethereum.core.LogTopic;
 import org.hyperledger.besu.ethereum.core.MutableAccount;
@@ -27,7 +28,9 @@ import org.hyperledger.besu.ethereum.vm.MessageFrame;
 import java.nio.charset.Charset;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 
 import com.blockchaintp.besu.daml.protobuf.DamlLogEvent;
 import com.blockchaintp.besu.daml.protobuf.DamlOperation;
@@ -60,8 +63,8 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
   private static final String DAML_PUBLIC = "DamlPublic";
 
-  private static final LogTopic DAML_LOG_TOPIC =
-      LogTopic.create(Namespace.getHash("daml/log-event".getBytes(Charset.defaultCharset())));
+  private static final LogTopic DAML_LOG_TOPIC = LogTopic
+      .create(Namespace.getHash("daml/log-event".getBytes(Charset.defaultCharset())));
 
   private static final int DEFAULT_MAX_TTL = 80; // 4x TimeKeeper period
   private static final int DEFAULT_MAX_CLOCK_SKEW = 40; // 2x TimeKeeper period
@@ -76,14 +79,13 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
   @Override
   public Gas gasRequirement(final Bytes input) {
-    LOG.trace(String.format("In gasRequirement(input=%s)", input.toHexString()));
-    return Gas.ZERO;
+    return Gas.of(0L);
   }
 
   @Override
   public Bytes compute(final Bytes input, final MessageFrame messageFrame) {
     final WorldUpdater updater = messageFrame.getWorldState();
-    final MutableAccount account = updater.getAccount(Address.DAML_PUBLIC).getMutable();
+    final MutableAccount account = updater.getOrCreate(Address.DAML_PUBLIC).getMutable();
 
     final LedgerState ledgerState = new DamlLedgerState(account);
     try {
@@ -95,21 +97,18 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
         String participantId = operation.getSubmittingParticipant();
         DamlLogEntryId entryId = KeyValueCommitting.unpackDamlLogEntryId(tx.getLogEntryId());
 
-        DamlLogEntry logEntry =
-            processTransaction(ledgerState, submission, participantId, entryId, updater);
+        DamlLogEntry logEntry = processTransaction(ledgerState, submission, participantId, entryId);
 
-        DamlLogEvent logEvent =
-            DamlLogEvent.newBuilder()
-                .setLogEntry(KeyValueCommitting.packDamlLogEntry(logEntry))
-                .setLogEntryId(tx.getLogEntryId())
-                .build();
-        LOG.info(String.format("Recording log entry under topic %s", DAML_LOG_TOPIC.toHexString()));
-        messageFrame.addLog(
-            new Log(
-                Address.DAML_PUBLIC,
-                Bytes.of(logEvent.toByteArray()),
-                Lists.newArrayList(DAML_LOG_TOPIC)));
-        updater.commit();
+        DamlLogEvent logEvent = DamlLogEvent.newBuilder().setLogEntry(KeyValueCommitting.packDamlLogEntry(logEntry))
+            .setLogEntryId(tx.getLogEntryId()).build();
+        String logHash = Hash.hash(Bytes.of(logEvent.toByteArray())).toHexString();
+        LOG.info(String.format("Recording log entry under topic %s hash=%s", DAML_LOG_TOPIC.toHexString(), logHash));
+        messageFrame
+            .addLog(new Log(Address.DAML_PUBLIC, Bytes.of(logEvent.toByteArray()), Lists.newArrayList(DAML_LOG_TOPIC)));
+        for (Entry<UInt256, UInt256> e : account.getUpdatedStorage().entrySet()) {
+          messageFrame.storageWasUpdated(e.getKey(), e.getValue().toBytes());
+        }
+        return Bytes.of(logEvent.toByteArray());
       } else {
         LOG.debug("DamlOperation DOES NOT contain a transaction, ignoring ...");
       }
@@ -132,8 +131,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
       final LedgerState ledgerState,
       final DamlSubmission submission,
       final String participantId,
-      final DamlLogEntryId entryId,
-      final WorldUpdater updater)
+      final DamlLogEntryId entryId)
       throws InternalError, InvalidTransactionException {
 
     long fetchStateStart = System.currentTimeMillis();
@@ -147,7 +145,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
     long recordStateStart = System.currentTimeMillis();
     DamlLogEntry logEntry =
-        recordState(ledgerState, submission, participantId, stateMap, entryId, updater);
+        recordState(ledgerState, submission, participantId, stateMap, entryId);
     long processFinished = System.currentTimeMillis();
 
     long recordStateTime = processFinished - recordStateStart;
@@ -165,19 +163,11 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
       throws InvalidTransactionException, InternalError {
 
     LOG.debug(String.format("Fetching DamlState for this transaction"));
-    Map<DamlStateKey, UInt256> inputDamlStateKeys =
-        KeyValueUtils.submissionToDamlStateKeyAddress(submission);
-    if (inputDamlStateKeys.isEmpty()) {
-      LOG.debug("No DAML state keys in input");
-    } else {
-      inputDamlStateKeys.forEach(
-          (k, v) ->
-              LOG.debug(String.format("state key=[%s], native key=[%s]", k, v.toHexString())));
-    }
+    List<DamlStateKey> inputDamlStateKeys=submission.getInputDamlStateList();
 
     LOG.debug(String.format("Fetching DAML state values for this submission"));
     Map<DamlStateKey, DamlStateValue> inputStates =
-        ledgerState.getDamlStates(inputDamlStateKeys.keySet());
+        ledgerState.getDamlStates(inputDamlStateKeys);
     if (inputStates.isEmpty()) {
       LOG.debug("No DAML state values for this submission");
     } else {
@@ -186,7 +176,6 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
 
     Map<DamlStateKey, Option<DamlStateValue>> inputStatesWithOption = new HashMap<>();
     inputDamlStateKeys
-        .keySet()
         .forEach(
             key -> {
               KeyCase keyCase = key.getKeyCase();
@@ -223,8 +212,7 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
       final DamlSubmission submission,
       final String participantId,
       final Map<DamlStateKey, Option<DamlStateValue>> stateMap,
-      final DamlLogEntryId entryId,
-      final WorldUpdater updater)
+      final DamlLogEntryId entryId)
       throws InternalError, InvalidTransactionException {
 
     long processStart = System.currentTimeMillis();
@@ -260,8 +248,6 @@ public class DamlPublicPrecompiledContract extends AbstractPrecompiledContract {
     LOG.debug(
         String.format("Recording log at %s, size=%d", entryId, newLogEntry.toByteString().size()));
     ledgerState.addDamlLogEntry(entryId, newLogEntry);
-
-    updater.commit();
 
     long recordFinish = System.currentTimeMillis();
     long processTime = recordStart - processStart;
