@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes;
 import org.apache.tuweni.bytes.Bytes32;
 
@@ -33,6 +35,7 @@ public class WorldStateKeyValueStorage implements WorldStateStorage {
 
   private final Subscribers<NodesAddedListener> nodeAddedListeners = Subscribers.create();
   private final KeyValueStorage keyValueStorage;
+  private static final Logger LOG = LogManager.getLogger();
 
   public WorldStateKeyValueStorage(final KeyValueStorage keyValueStorage) {
     this.keyValueStorage = keyValueStorage;
@@ -156,12 +159,14 @@ public class WorldStateKeyValueStorage implements WorldStateStorage {
 
     @Override
     public void commit() {
+      LOG.debug("commit");
       nodeAddedListeners.forEach(listener -> listener.onNodesAdded(addedNodes));
       transaction.commit();
     }
 
     @Override
     public void rollback() {
+      LOG.debug("rollback");
       transaction.rollback();
     }
   }

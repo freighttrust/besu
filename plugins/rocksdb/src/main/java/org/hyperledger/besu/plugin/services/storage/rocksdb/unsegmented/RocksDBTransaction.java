@@ -14,6 +14,9 @@
  */
 package org.hyperledger.besu.plugin.services.storage.rocksdb.unsegmented;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.tuweni.bytes.Bytes;
 import org.hyperledger.besu.plugin.services.exception.StorageException;
 import org.hyperledger.besu.plugin.services.metrics.OperationTimer;
 import org.hyperledger.besu.plugin.services.storage.KeyValueStorageTransaction;
@@ -29,6 +32,8 @@ public class RocksDBTransaction implements KeyValueStorageTransaction {
   private final Transaction innerTx;
   private final WriteOptions options;
 
+  private static final Logger LOG = LogManager.getLogger();
+
   RocksDBTransaction(
       final Transaction innerTx, final WriteOptions options, final RocksDBMetrics metrics) {
     this.innerTx = innerTx;
@@ -39,6 +44,7 @@ public class RocksDBTransaction implements KeyValueStorageTransaction {
   @Override
   public void put(final byte[] key, final byte[] value) {
     try (final OperationTimer.TimingContext ignored = metrics.getWriteLatency().startTimer()) {
+      LOG.debug(String.format("Putting key=%s size=%s",Bytes.of(key).toHexString(),value.length));
       innerTx.put(key, value);
     } catch (final RocksDBException e) {
       throw new StorageException(e);
@@ -57,6 +63,7 @@ public class RocksDBTransaction implements KeyValueStorageTransaction {
   @Override
   public void commit() throws StorageException {
     try (final OperationTimer.TimingContext ignored = metrics.getCommitLatency().startTimer()) {
+      LOG.debug("Committing");
       innerTx.commit();
     } catch (final RocksDBException e) {
       throw new StorageException(e);
@@ -68,6 +75,7 @@ public class RocksDBTransaction implements KeyValueStorageTransaction {
   @Override
   public void rollback() {
     try {
+      LOG.debug("Rollback");
       innerTx.rollback();
       metrics.getRollbackCount().inc();
     } catch (final RocksDBException e) {
