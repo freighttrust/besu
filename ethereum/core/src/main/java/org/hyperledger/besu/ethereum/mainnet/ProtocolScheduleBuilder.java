@@ -151,6 +151,14 @@ public class ProtocolScheduleBuilder<C> {
             config.getContractSizeLimit(),
             config.getEvmStackSize(),
             isRevertReasonEnabled));
+    addProtocolSpec(
+        protocolSchedule,
+        config.getMuirGlacierBlockNumber(),
+        MainnetProtocolSpecs.muirGlacierDefinition(
+            chainId,
+            config.getContractSizeLimit(),
+            config.getEvmStackSize(),
+            isRevertReasonEnabled));
 
     // specs for classic network
     config
@@ -191,6 +199,22 @@ public class ProtocolScheduleBuilder<C> {
         protocolSchedule,
         config.getAtlantisBlockNumber(),
         ClassicProtocolSpecs.atlantisDefinition(
+            chainId,
+            config.getContractSizeLimit(),
+            config.getEvmStackSize(),
+            isRevertReasonEnabled));
+    addProtocolSpec(
+        protocolSchedule,
+        config.getAghartaBlockNumber(),
+        ClassicProtocolSpecs.aghartaDefinition(
+            chainId,
+            config.getContractSizeLimit(),
+            config.getEvmStackSize(),
+            isRevertReasonEnabled));
+    addProtocolSpec(
+        protocolSchedule,
+        config.getAztlanBlockNumber(),
+        ClassicProtocolSpecs.aztlanDefinition(
             chainId,
             config.getContractSizeLimit(),
             config.getEvmStackSize(),
@@ -252,6 +276,8 @@ public class ProtocolScheduleBuilder<C> {
         validateForkOrder(
             "ConstantinopleFix", config.getConstantinopleFixBlockNumber(), lastForkBlock);
     lastForkBlock = validateForkOrder("Istanbul", config.getIstanbulBlockNumber(), lastForkBlock);
+    lastForkBlock =
+        validateForkOrder("MuirGlacier", config.getMuirGlacierBlockNumber(), lastForkBlock);
     assert (lastForkBlock >= 0);
   }
 
@@ -267,6 +293,8 @@ public class ProtocolScheduleBuilder<C> {
         validateForkOrder(
             "DefuseDifficultyBomb", config.getDefuseDifficultyBombBlockNumber(), lastForkBlock);
     lastForkBlock = validateForkOrder("Atlantis", config.getAtlantisBlockNumber(), lastForkBlock);
+    lastForkBlock = validateForkOrder("Agharta", config.getAghartaBlockNumber(), lastForkBlock);
+    lastForkBlock = validateForkOrder("Aztlan", config.getAztlanBlockNumber(), lastForkBlock);
     assert (lastForkBlock >= 0);
   }
 }

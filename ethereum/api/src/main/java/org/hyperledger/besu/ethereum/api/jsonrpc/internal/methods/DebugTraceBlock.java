@@ -31,25 +31,26 @@ import org.hyperledger.besu.ethereum.debug.TraceOptions;
 import org.hyperledger.besu.ethereum.rlp.RLP;
 import org.hyperledger.besu.ethereum.rlp.RLPException;
 import org.hyperledger.besu.ethereum.vm.DebugOperationTracer;
-import org.hyperledger.besu.util.bytes.BytesValue;
 
 import java.util.Collection;
+import java.util.function.Supplier;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.tuweni.bytes.Bytes;
 
 public class DebugTraceBlock implements JsonRpcMethod {
 
   private static final Logger LOG = LogManager.getLogger();
-  private final BlockTracer blockTracer;
+  private final Supplier<BlockTracer> blockTracerSupplier;
   private final BlockHeaderFunctions blockHeaderFunctions;
   private final BlockchainQueries blockchain;
 
   public DebugTraceBlock(
-      final BlockTracer blockTracer,
+      final Supplier<BlockTracer> blockTracerSupplier,
       final BlockHeaderFunctions blockHeaderFunctions,
       final BlockchainQueries blockchain) {
-    this.blockTracer = blockTracer;
+    this.blockTracerSupplier = blockTracerSupplier;
     this.blockHeaderFunctions = blockHeaderFunctions;
     this.blockchain = blockchain;
   }
@@ -64,7 +65,7 @@ public class DebugTraceBlock implements JsonRpcMethod {
     final String input = requestContext.getRequiredParameter(0, String.class);
     final Block block;
     try {
-      block = Block.readFrom(RLP.input(BytesValue.fromHexString(input)), this.blockHeaderFunctions);
+      block = Block.readFrom(RLP.input(Bytes.fromHexString(input)), this.blockHeaderFunctions);
     } catch (final RLPException e) {
       LOG.debug("Failed to parse block RLP", e);
       return new JsonRpcErrorResponse(
@@ -78,7 +79,8 @@ public class DebugTraceBlock implements JsonRpcMethod {
 
     if (this.blockchain.blockByHash(block.getHeader().getParentHash()).isPresent()) {
       final Collection<DebugTraceTransactionResult> results =
-          blockTracer
+          blockTracerSupplier
+              .get()
               .trace(block, new DebugOperationTracer(traceOptions))
               .map(BlockTrace::getTransactionTraces)
               .map(DebugTraceTransactionResult::of)

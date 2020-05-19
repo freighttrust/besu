@@ -48,6 +48,8 @@ import org.hyperledger.besu.cli.options.NetworkingOptions;
 import org.hyperledger.besu.cli.options.PrunerOptions;
 import org.hyperledger.besu.cli.options.SynchronizerOptions;
 import org.hyperledger.besu.cli.options.TransactionPoolOptions;
+import org.hyperledger.besu.cli.presynctasks.PreSynchronizationTaskRunner;
+import org.hyperledger.besu.cli.presynctasks.PrivateDatabaseMigrationPreSyncTask;
 import org.hyperledger.besu.cli.subcommands.PasswordSubCommand;
 import org.hyperledger.besu.cli.subcommands.PublicKeySubCommand;
 import org.hyperledger.besu.cli.subcommands.PublicKeySubCommand.KeyLoader;
@@ -64,12 +66,16 @@ import org.hyperledger.besu.cli.util.VersionProvider;
 import org.hyperledger.besu.config.GenesisConfigFile;
 import org.hyperledger.besu.controller.BesuController;
 import org.hyperledger.besu.controller.BesuControllerBuilder;
-import org.hyperledger.besu.controller.KeyPairUtil;
+import org.hyperledger.besu.crypto.KeyPairUtil;
+import org.hyperledger.besu.enclave.EnclaveFactory;
 import org.hyperledger.besu.ethereum.api.graphql.GraphQLConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcConfiguration;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcApi;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcApis;
 import org.hyperledger.besu.ethereum.api.jsonrpc.websocket.WebSocketConfiguration;
+import org.hyperledger.besu.ethereum.api.tls.FileBasedPasswordProvider;
+import org.hyperledger.besu.ethereum.api.tls.TlsClientAuthConfiguration;
+import org.hyperledger.besu.ethereum.api.tls.TlsConfiguration;
 import org.hyperledger.besu.ethereum.core.Address;
 import org.hyperledger.besu.ethereum.core.Hash;
 import org.hyperledger.besu.ethereum.core.MiningParameters;
@@ -114,10 +120,8 @@ import org.hyperledger.besu.services.PicoCLIOptionsImpl;
 import org.hyperledger.besu.services.StorageServiceImpl;
 import org.hyperledger.besu.util.NetworkUtility;
 import org.hyperledger.besu.util.PermissioningConfigurationValidator;
-import org.hyperledger.besu.util.bytes.BytesValue;
 import org.hyperledger.besu.util.number.Fraction;
 import org.hyperledger.besu.util.number.PositiveNumber;
-import org.hyperledger.besu.util.uint.UInt256;
 
 import java.io.File;
 import java.io.IOException;
@@ -153,6 +157,8 @@ import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.units.bigints.UInt256;
 import picocli.CommandLine;
 import picocli.CommandLine.AbstractParseResultHandler;
 import picocli.CommandLine.Command;
@@ -207,6 +213,9 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
 
   // Property to indicate whether Besu has been launched via docker
   private final boolean isDocker = Boolean.getBoolean("besu.docker");
+
+  private final PreSynchronizationTaskRunner preSynchronizationTaskRunner =
+      new PreSynchronizationTaskRunner();
 
   // CLI options defined by user at runtime.
   // Options parsing is done with CLI library Picocli https://picocli.info/
@@ -314,7 +323,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
     }
   }
 
-  private Collection<BytesValue> bannedNodeIds = new ArrayList<>();
+  private Collection<Bytes> bannedNodeIds = new ArrayList<>();
 
   @Option(
       names = {"--sync-mode"},
@@ -338,7 +347,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
               + " (default: MAINNET)")
   private final NetworkName network = null;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--p2p-host"},
       paramLabel = MANDATORY_HOST_FORMAT_HELP,
@@ -346,6 +355,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
       arity = "1")
   private String p2pHost = autoDiscoverDefaultIP().getHostAddress();
 
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--p2p-interface"},
       paramLabel = MANDATORY_HOST_FORMAT_HELP,
@@ -381,7 +391,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
       description = "Set to start the GraphQL HTTP service (default: ${DEFAULT-VALUE})")
   private final Boolean isGraphQLHttpEnabled = false;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--graphql-http-host"},
       paramLabel = MANDATORY_HOST_FORMAT_HELP,
@@ -407,7 +417,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
       description = "Set to start the JSON-RPC HTTP service (default: ${DEFAULT-VALUE})")
   private final Boolean isRpcHttpEnabled = false;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--rpc-http-host"},
       paramLabel = MANDATORY_HOST_FORMAT_HELP,
@@ -446,11 +456,49 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
   private final Boolean isRpcHttpAuthenticationEnabled = false;
 
   @Option(
+      names = {"--rpc-http-tls-enabled"},
+      description = "Enable TLS for the JSON-RPC HTTP service (default: ${DEFAULT-VALUE})")
+  private final Boolean isRpcHttpTlsEnabled = false;
+
+  @Option(
+      names = {"--rpc-http-tls-keystore-file"},
+      paramLabel = MANDATORY_FILE_FORMAT_HELP,
+      description =
+          "Keystore (PKCS#12) containing key/certificate for the JSON-RPC HTTP service. Required if TLS is enabled.")
+  private final Path rpcHttpTlsKeyStoreFile = null;
+
+  @Option(
+      names = {"--rpc-http-tls-keystore-password-file"},
+      paramLabel = MANDATORY_FILE_FORMAT_HELP,
+      description =
+          "File containing password to unlock keystore for the JSON-RPC HTTP service. Required if TLS is enabled.")
+  private final Path rpcHttpTlsKeyStorePasswordFile = null;
+
+  @Option(
+      names = {"--rpc-http-tls-client-auth-enabled"},
+      description =
+          "Enable TLS client authentication for the JSON-RPC HTTP service (default: ${DEFAULT-VALUE})")
+  private final Boolean isRpcHttpTlsClientAuthEnabled = false;
+
+  @Option(
+      names = {"--rpc-http-tls-known-clients-file"},
+      paramLabel = MANDATORY_FILE_FORMAT_HELP,
+      description =
+          "Path to file containing clients certificate common name and fingerprint for client authentication")
+  private final Path rpcHttpTlsKnownClientsFile = null;
+
+  @Option(
+      names = {"--rpc-http-tls-ca-clients-enabled"},
+      description =
+          "Enable to accept clients certificate signed by a valid CA for client authentication (default: ${DEFAULT-VALUE})")
+  private final Boolean isRpcHttpTlsCAClientsEnabled = false;
+
+  @Option(
       names = {"--rpc-ws-enabled"},
       description = "Set to start the JSON-RPC WebSocket service (default: ${DEFAULT-VALUE})")
   private final Boolean isRpcWsEnabled = false;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--rpc-ws-host"},
       paramLabel = MANDATORY_HOST_FORMAT_HELP,
@@ -482,11 +530,36 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
   private final Boolean isRpcWsAuthenticationEnabled = false;
 
   @Option(
+      names = {"--privacy-tls-enabled"},
+      paramLabel = MANDATORY_FILE_FORMAT_HELP,
+      description = "Enable TLS for connecting to privacy enclave (default: ${DEFAULT-VALUE})")
+  private final Boolean isPrivacyTlsEnabled = false;
+
+  @Option(
+      names = "--privacy-tls-keystore-file",
+      paramLabel = MANDATORY_FILE_FORMAT_HELP,
+      description =
+          "Path to a PKCS#12 formatted keystore; used to enable TLS on inbound connections.")
+  private final Path privacyKeyStoreFile = null;
+
+  @Option(
+      names = "--privacy-tls-keystore-password-file",
+      paramLabel = MANDATORY_FILE_FORMAT_HELP,
+      description = "Path to a file containing the password used to decrypt the keystore.")
+  private final Path privacyKeyStorePasswordFile = null;
+
+  @Option(
+      names = "--privacy-tls-known-enclave-file",
+      paramLabel = MANDATORY_FILE_FORMAT_HELP,
+      description = "Path to a file containing the fingerprints of the authorized privacy enclave.")
+  private final Path privacyTlsKnownEnclaveFile = null;
+
+  @Option(
       names = {"--metrics-enabled"},
       description = "Set to start the metrics exporter (default: ${DEFAULT-VALUE})")
   private final Boolean isMetricsEnabled = false;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--metrics-host"},
       paramLabel = MANDATORY_HOST_FORMAT_HELP,
@@ -515,7 +588,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
       description = "Enable the metrics push gateway integration (default: ${DEFAULT-VALUE})")
   private final Boolean isMetricsPushEnabled = false;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--metrics-push-host"},
       paramLabel = MANDATORY_HOST_FORMAT_HELP,
@@ -538,7 +611,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
       arity = "1")
   private final Integer metricsPushInterval = 15;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--metrics-push-prometheus-job"},
       description = "Job name to use when in push mode (default: ${DEFAULT-VALUE})",
@@ -556,9 +629,8 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
   @Option(
       names = {"--logging", "-l"},
       paramLabel = "<LOG VERBOSITY LEVEL>",
-      description =
-          "Logging verbosity levels: OFF, FATAL, ERROR, WARN, INFO, DEBUG, TRACE, ALL (default: ${DEFAULT-VALUE})")
-  private final Level logLevel = LogManager.getRootLogger().getLevel();
+      description = "Logging verbosity levels: OFF, FATAL, ERROR, WARN, INFO, DEBUG, TRACE, ALL")
+  private final Level logLevel = null;
 
   @Option(
       names = {"--miner-enabled"},
@@ -570,7 +642,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
       description = "Set if node will perform Stratum mining (default: ${DEFAULT-VALUE})")
   private final Boolean iStratumMiningEnabled = false;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--miner-stratum-host"},
       description = "Host for Stratum network mining service (default: ${DEFAULT-VALUE})")
@@ -581,7 +653,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
       description = "Stratum port binding (default: ${DEFAULT-VALUE})")
   private final Integer stratumPort = 8008;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       hidden = true,
       names = {"--Xminer-stratum-extranonce"},
@@ -610,7 +682,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
           "A hex string representing the (32) bytes to be included in the extra data "
               + "field of a mined block (default: ${DEFAULT-VALUE})",
       arity = "1")
-  private final BytesValue extraData = DEFAULT_EXTRA_DATA;
+  private final Bytes extraData = DEFAULT_EXTRA_DATA;
 
   @Option(
       names = {"--pruning-enabled"},
@@ -657,6 +729,11 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
   private final Boolean isPrivacyEnabled = false;
 
   @Option(
+      names = {"--privacy-multi-tenancy-enabled"},
+      description = "Enable multi-tenant private transactions (default: ${DEFAULT-VALUE})")
+  private final Boolean isPrivacyMultiTenancyEnabled = false;
+
+  @Option(
       names = {"--revert-reason-enabled"},
       description =
           "Enable passing the revert reason back through TransactionReceipts (default: ${DEFAULT-VALUE})")
@@ -688,6 +765,11 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
   private final Path privacyMarkerTransactionSigningKeyPath = null;
 
   @Option(
+      names = {"--privacy-enable-database-migration"},
+      description = "Enable private database metadata migration (default: ${DEFAULT-VALUE})")
+  private final Boolean migratePrivateDatabase = false;
+
+  @Option(
       names = {"--target-gas-limit"},
       description =
           "Sets target gas limit per block. If set each blocks gas limit will approach this setting over time if the current gas limit is different.")
@@ -710,12 +792,18 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
   private final Integer pendingTxRetentionPeriod =
       TransactionPoolConfiguration.DEFAULT_TX_RETENTION_HOURS;
 
-  @SuppressWarnings("FieldMayBeFinal") // Because PicoCLI requires Strings to not be final.
+  @SuppressWarnings({"FieldCanBeFinal", "FieldMayBeFinal"}) // PicoCLI requires non-final Strings.
   @Option(
       names = {"--key-value-storage"},
       description = "Identity for the key-value storage to be used.",
       arity = "1")
   private String keyValueStorageName = DEFAULT_KEY_VALUE_STORAGE_NAME;
+
+  @Option(
+      names = {"--auto-log-bloom-caching-enabled"},
+      description = "Enable automatic log bloom caching (default: ${DEFAULT-VALUE})",
+      arity = "1")
+  private final Boolean autoLogBloomCachingEnabled = true;
 
   @Option(
       names = {"--override-genesis-config"},
@@ -739,6 +827,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
   private BesuConfiguration pluginCommonConfiguration;
   private final Supplier<ObservableMetricsSystem> metricsSystem =
       Suppliers.memoize(() -> PrometheusMetricsSystem.init(metricsConfiguration()));
+  private Vertx vertx;
 
   public BesuCommand(
       final Logger logger,
@@ -802,9 +891,17 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
   @Override
   public void run() {
     try {
-      prepareLogging();
+      configureLogging(true);
       logger.info("Starting Besu version: {}", BesuInfo.nodeName(identityString));
-      validateOptions().configure().controller().startPlugins().startSynchronization();
+
+      // Need to create vertx after cmdline has been parsed, such that metricSystem is configurable
+      vertx = createVertx(createVertxOptions(metricsSystem.get()));
+
+      final BesuCommand controller = validateOptions().configure().controller();
+
+      preSynchronizationTaskRunner.runTasks(controller.besuController);
+
+      controller.startPlugins().startSynchronization();
     } catch (final Exception e) {
       throw new ParameterException(this.commandLine, e.getMessage(), e);
     }
@@ -856,10 +953,10 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
 
   private BesuCommand registerConverters() {
     commandLine.registerConverter(Address.class, Address::fromHexStringStrict);
-    commandLine.registerConverter(BytesValue.class, BytesValue::fromHexString);
+    commandLine.registerConverter(Bytes.class, Bytes::fromHexString);
     commandLine.registerConverter(Level.class, Level::valueOf);
     commandLine.registerConverter(SyncMode.class, SyncMode::fromString);
-    commandLine.registerConverter(UInt256.class, (arg) -> UInt256.of(new BigInteger(arg)));
+    commandLine.registerConverter(UInt256.class, (arg) -> UInt256.valueOf(new BigInteger(arg)));
     commandLine.registerConverter(Wei.class, (arg) -> Wei.of(Long.parseUnsignedLong(arg)));
     commandLine.registerConverter(PositiveNumber.class, PositiveNumber::fromString);
     commandLine.registerConverter(Hash.class, Hash::fromHexString);
@@ -950,10 +1047,12 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
     return this;
   }
 
-  private void prepareLogging() {
+  public void configureLogging(final boolean announce) {
     // set log level per CLI flags
     if (logLevel != null) {
-      System.out.println("Setting logging level to " + logLevel.name());
+      if (announce) {
+        System.out.println("Setting logging level to " + logLevel.name());
+      }
       Configurator.setAllLevels("", logLevel);
     }
   }
@@ -1141,6 +1240,8 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
   }
 
   private JsonRpcConfiguration jsonRpcConfiguration() {
+    checkRpcTlsClientAuthOptionsDependencies();
+    checkRpcTlsOptionsDependencies();
 
     CommandLineUtils.checkOptionDependencies(
         logger,
@@ -1155,7 +1256,13 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
             "--rpc-http-port",
             "--rpc-http-authentication-enabled",
             "--rpc-http-authentication-credentials-file",
-            "--rpc-http-authentication-public-key-file"));
+            "--rpc-http-authentication-public-key-file",
+            "--rpc-http-tls-enabled",
+            "--rpc-http-tls-keystore-file",
+            "--rpc-http-tls-keystore-password-file",
+            "--rpc-http-tls-client-auth-enabled",
+            "--rpc-http-tls-known-clients-file",
+            "--rpc-http-tls-ca-clients-enabled"));
 
     if (isRpcHttpAuthenticationEnabled
         && rpcHttpAuthenticationCredentialsFile() == null
@@ -1175,7 +1282,91 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
     jsonRpcConfiguration.setAuthenticationEnabled(isRpcHttpAuthenticationEnabled);
     jsonRpcConfiguration.setAuthenticationCredentialsFile(rpcHttpAuthenticationCredentialsFile());
     jsonRpcConfiguration.setAuthenticationPublicKeyFile(rpcHttpAuthenticationPublicKeyFile());
+    jsonRpcConfiguration.setTlsConfiguration(rpcHttpTlsConfiguration());
     return jsonRpcConfiguration;
+  }
+
+  private void checkRpcTlsOptionsDependencies() {
+    CommandLineUtils.checkOptionDependencies(
+        logger,
+        commandLine,
+        "--rpc-http-tls-enabled",
+        !isRpcHttpTlsEnabled,
+        asList(
+            "--rpc-http-tls-keystore-file",
+            "--rpc-http-tls-keystore-password-file",
+            "--rpc-http-tls-client-auth-enabled",
+            "--rpc-http-tls-known-clients-file",
+            "--rpc-http-tls-ca-clients-enabled"));
+  }
+
+  private void checkRpcTlsClientAuthOptionsDependencies() {
+    CommandLineUtils.checkOptionDependencies(
+        logger,
+        commandLine,
+        "--rpc-http-tls-client-auth-enabled",
+        !isRpcHttpTlsClientAuthEnabled,
+        asList("--rpc-http-tls-known-clients-file", "--rpc-http-tls-ca-clients-enabled"));
+  }
+
+  private void checkPrivacyTlsOptionsDependencies() {
+    CommandLineUtils.checkOptionDependencies(
+        logger,
+        commandLine,
+        "--privacy-tls-enabled",
+        !isPrivacyTlsEnabled,
+        asList(
+            "--privacy-tls-keystore-file",
+            "--privacy-tls-keystore-password-file",
+            "--privacy-tls-known-enclave-file"));
+  }
+
+  private Optional<TlsConfiguration> rpcHttpTlsConfiguration() {
+    if (!isRpcTlsConfigurationRequired()) {
+      return Optional.empty();
+    }
+
+    if (rpcHttpTlsKeyStoreFile == null) {
+      throw new ParameterException(
+          commandLine, "Keystore file is required when TLS is enabled for JSON-RPC HTTP endpoint");
+    }
+
+    if (rpcHttpTlsKeyStorePasswordFile == null) {
+      throw new ParameterException(
+          commandLine,
+          "File containing password to unlock keystore is required when TLS is enabled for JSON-RPC HTTP endpoint");
+    }
+
+    if (isRpcHttpTlsClientAuthEnabled
+        && !isRpcHttpTlsCAClientsEnabled
+        && rpcHttpTlsKnownClientsFile == null) {
+      throw new ParameterException(
+          commandLine,
+          "Known-clients file must be specified or CA clients must be enabled when TLS client authentication is enabled for JSON-RPC HTTP endpoint");
+    }
+
+    return Optional.of(
+        TlsConfiguration.Builder.aTlsConfiguration()
+            .withKeyStorePath(rpcHttpTlsKeyStoreFile)
+            .withKeyStorePasswordSupplier(
+                new FileBasedPasswordProvider(rpcHttpTlsKeyStorePasswordFile))
+            .withClientAuthConfiguration(rpcHttpTlsClientAuthConfiguration())
+            .build());
+  }
+
+  private TlsClientAuthConfiguration rpcHttpTlsClientAuthConfiguration() {
+    if (isRpcHttpTlsClientAuthEnabled) {
+      return TlsClientAuthConfiguration.Builder.aTlsClientAuthConfiguration()
+          .withKnownClientsFile(rpcHttpTlsKnownClientsFile)
+          .withCaClientsEnabled(isRpcHttpTlsCAClientsEnabled)
+          .build();
+    }
+
+    return null;
+  }
+
+  private boolean isRpcTlsConfigurationRequired() {
+    return isRpcHttpEnabled && isRpcHttpTlsEnabled;
   }
 
   private WebSocketConfiguration webSocketConfiguration() {
@@ -1346,14 +1537,21 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
     return permissionsNodesContractEnabled || permissionsAccountsContractEnabled;
   }
 
-  private PrivacyParameters privacyParameters() throws IOException {
+  private PrivacyParameters privacyParameters() {
 
     CommandLineUtils.checkOptionDependencies(
         logger,
         commandLine,
         "--privacy-enabled",
         !isPrivacyEnabled,
-        asList("--privacy-url", "--privacy-public-key-file", "--privacy-precompiled-address"));
+        asList(
+            "--privacy-url",
+            "--privacy-public-key-file",
+            "--privacy-precompiled-address",
+            "--privacy-multi-tenancy-enabled",
+            "--privacy-tls-enabled"));
+
+    checkPrivacyTlsOptionsDependencies();
 
     final PrivacyParameters.Builder privacyParametersBuilder = new PrivacyParameters.Builder();
     if (isPrivacyEnabled) {
@@ -1365,11 +1563,33 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
         throw new ParameterException(commandLine, String.format("%s %s", "Pruning", errorSuffix));
       }
 
+      if (isPrivacyMultiTenancyEnabled
+          && !jsonRpcConfiguration.isAuthenticationEnabled()
+          && !webSocketConfiguration.isAuthenticationEnabled()) {
+        throw new ParameterException(
+            commandLine,
+            "Privacy multi-tenancy requires either http authentication to be enabled or WebSocket authentication to be enabled");
+      }
+
       privacyParametersBuilder.setEnabled(true);
       privacyParametersBuilder.setEnclaveUrl(privacyUrl);
-      if (privacyPublicKeyFile() != null) {
-        privacyParametersBuilder.setEnclavePublicKeyUsingFile(privacyPublicKeyFile());
-      } else {
+      privacyParametersBuilder.setMultiTenancyEnabled(isPrivacyMultiTenancyEnabled);
+
+      final boolean hasPrivacyPublicKey = privacyPublicKeyFile() != null;
+      if (hasPrivacyPublicKey && !isPrivacyMultiTenancyEnabled) {
+        try {
+          privacyParametersBuilder.setEnclavePublicKeyUsingFile(privacyPublicKeyFile());
+        } catch (final IOException e) {
+          throw new ParameterException(
+              commandLine, "Problem with privacy-public-key-file: " + e.getMessage(), e);
+        } catch (final IllegalArgumentException e) {
+          throw new ParameterException(
+              commandLine, "Contents of privacy-public-key-file invalid: " + e.getMessage(), e);
+        }
+      } else if (hasPrivacyPublicKey) {
+        throw new ParameterException(
+            commandLine, "Privacy multi-tenancy and privacy public key cannot be used together");
+      } else if (!isPrivacyMultiTenancyEnabled) {
         throw new ParameterException(
             commandLine, "Please specify Enclave public key file path to enable privacy");
       }
@@ -1377,24 +1597,49 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
       privacyParametersBuilder.setPrivateKeyPath(privacyMarkerTransactionSigningKeyPath);
       privacyParametersBuilder.setStorageProvider(
           privacyKeyStorageProvider(keyValueStorageName + "-privacy"));
+      if (isPrivacyTlsEnabled) {
+        privacyParametersBuilder.setPrivacyKeyStoreFile(privacyKeyStoreFile);
+        privacyParametersBuilder.setPrivacyKeyStorePasswordFile(privacyKeyStorePasswordFile);
+        privacyParametersBuilder.setPrivacyTlsKnownEnclaveFile(privacyTlsKnownEnclaveFile);
+      }
+      privacyParametersBuilder.setEnclaveFactory(new EnclaveFactory(vertx));
+    } else {
+      if (anyPrivacyApiEnabled()) {
+        logger.warn("Privacy is disabled. Cannot use EEA/PRIV API methods when not using Privacy.");
+      }
     }
 
-    return privacyParametersBuilder.build();
+    final PrivacyParameters privacyParameters = privacyParametersBuilder.build();
+
+    if (isPrivacyEnabled) {
+      preSynchronizationTaskRunner.addTask(
+          new PrivateDatabaseMigrationPreSyncTask(privacyParameters, migratePrivateDatabase));
+    }
+
+    return privacyParameters;
+  }
+
+  private boolean anyPrivacyApiEnabled() {
+    return rpcHttpApis.contains(RpcApis.EEA)
+        || rpcWsApis.contains(RpcApis.EEA)
+        || rpcHttpApis.contains(RpcApis.PRIV)
+        || rpcWsApis.contains(RpcApis.PRIV);
   }
 
   private PrivacyKeyValueStorageProvider privacyKeyStorageProvider(final String name) {
     return new PrivacyKeyValueStorageProviderBuilder()
-        .withStorageFactory(
-            (PrivacyKeyValueStorageFactory)
-                storageService
-                    .getByName(name)
-                    .orElseThrow(
-                        () ->
-                            new StorageException(
-                                "No KeyValueStorageFactory found for key: " + name)))
+        .withStorageFactory(privacyKeyValueStorageFactory(name))
         .withCommonConfiguration(pluginCommonConfiguration)
         .withMetricsSystem(getMetricsSystem())
         .build();
+  }
+
+  private PrivacyKeyValueStorageFactory privacyKeyValueStorageFactory(final String name) {
+    return (PrivacyKeyValueStorageFactory)
+        storageService
+            .getByName(name)
+            .orElseThrow(
+                () -> new StorageException("No KeyValueStorageFactory found for key: " + name));
   }
 
   private KeyValueStorageProvider keyStorageProvider(final String name) {
@@ -1453,7 +1698,7 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
     final ObservableMetricsSystem metricsSystem = this.metricsSystem.get();
     final Runner runner =
         runnerBuilder
-            .vertx(createVertx(createVertxOptions(metricsSystem)))
+            .vertx(vertx)
             .besuController(controller)
             .p2pEnabled(p2pEnabled)
             .natMethod(natMethod)
@@ -1476,6 +1721,8 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
             .metricsConfiguration(metricsConfiguration)
             .staticNodes(staticNodes)
             .identityString(identityString)
+            .besuPluginContext(besuPluginContext)
+            .autoLogBloomCaching(autoLogBloomCachingEnabled)
             .build();
 
     addShutdownHook(runner);
@@ -1774,7 +2021,8 @@ public class BesuCommand implements DefaultCommandValues, Runnable {
     return new BesuExceptionHandler(this::getLogLevel);
   }
 
-  private Level getLogLevel() {
+  @VisibleForTesting
+  Level getLogLevel() {
     return logLevel;
   }
 }

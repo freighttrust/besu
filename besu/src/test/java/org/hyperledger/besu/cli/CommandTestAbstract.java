@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyFloat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
@@ -55,11 +56,12 @@ import org.hyperledger.besu.ethereum.storage.StorageProvider;
 import org.hyperledger.besu.metrics.prometheus.MetricsConfiguration;
 import org.hyperledger.besu.plugin.services.BesuConfiguration;
 import org.hyperledger.besu.plugin.services.PicoCLIOptions;
+import org.hyperledger.besu.plugin.services.StorageService;
 import org.hyperledger.besu.plugin.services.storage.KeyValueStorageFactory;
 import org.hyperledger.besu.plugin.services.storage.PrivacyKeyValueStorageFactory;
 import org.hyperledger.besu.services.BesuPluginContextImpl;
 import org.hyperledger.besu.services.StorageServiceImpl;
-import org.hyperledger.besu.util.bytes.BytesValue;
+import org.hyperledger.besu.services.kvstore.InMemoryKeyValueStorage;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -80,6 +82,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.tuweni.bytes.Bytes;
 import org.awaitility.Awaitility;
 import org.junit.After;
 import org.junit.Before;
@@ -132,7 +135,7 @@ public abstract class CommandTestAbstract {
   @Mock protected Logger mockLogger;
   @Mock protected BesuPluginContextImpl mockBesuPluginContext;
 
-  @Captor protected ArgumentCaptor<Collection<BytesValue>> bytesValueCollectionCollector;
+  @Captor protected ArgumentCaptor<Collection<Bytes>> bytesCollectionCollector;
   @Captor protected ArgumentCaptor<Path> pathArgumentCaptor;
   @Captor protected ArgumentCaptor<File> fileArgumentCaptor;
   @Captor protected ArgumentCaptor<String> stringArgumentCaptor;
@@ -219,12 +222,26 @@ public abstract class CommandTestAbstract {
     when(mockRunnerBuilder.metricsConfiguration(any())).thenReturn(mockRunnerBuilder);
     when(mockRunnerBuilder.staticNodes(any())).thenReturn(mockRunnerBuilder);
     when(mockRunnerBuilder.identityString(any())).thenReturn(mockRunnerBuilder);
+    when(mockRunnerBuilder.besuPluginContext(any())).thenReturn(mockRunnerBuilder);
+    when(mockRunnerBuilder.autoLogBloomCaching(anyBoolean())).thenReturn(mockRunnerBuilder);
     when(mockRunnerBuilder.build()).thenReturn(mockRunner);
 
-    when(storageService.getByName("rocksdb")).thenReturn(Optional.of(rocksDBStorageFactory));
+    lenient()
+        .when(storageService.getByName(eq("rocksdb")))
+        .thenReturn(Optional.of(rocksDBStorageFactory));
+    lenient()
+        .when(storageService.getByName(eq("rocksdb-privacy")))
+        .thenReturn(Optional.of(rocksDBSPrivacyStorageFactory));
+    lenient()
+        .when(rocksDBSPrivacyStorageFactory.create(any(), any(), any()))
+        .thenReturn(new InMemoryKeyValueStorage());
 
-    when(mockBesuPluginContext.getService(PicoCLIOptions.class))
+    lenient()
+        .when(mockBesuPluginContext.getService(PicoCLIOptions.class))
         .thenReturn(Optional.of(cliOptions));
+    lenient()
+        .when(mockBesuPluginContext.getService(StorageService.class))
+        .thenReturn(Optional.of(storageService));
   }
 
   // Display outputs for debug purpose

@@ -14,14 +14,16 @@
  */
 package org.hyperledger.besu.ethereum.api.jsonrpc.methods;
 
-import org.hyperledger.besu.enclave.Enclave;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcApi;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcApis;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.EnclavePublicKeyProvider;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv.PrivCall;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv.PrivCreatePrivacyGroup;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv.PrivDeletePrivacyGroup;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv.PrivDistributeRawTransaction;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv.PrivFindPrivacyGroup;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv.PrivGetCode;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv.PrivGetPrivacyPrecompileAddress;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv.PrivGetPrivateTransaction;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv.PrivGetTransactionCount;
@@ -30,7 +32,7 @@ import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.core.PrivacyParameters;
 import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
 import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
-import org.hyperledger.besu.ethereum.privacy.PrivateTransactionHandler;
+import org.hyperledger.besu.ethereum.privacy.PrivacyController;
 
 import java.util.Map;
 
@@ -51,17 +53,23 @@ public class PrivJsonRpcMethods extends PrivacyApiGroupJsonRpcMethods {
 
   @Override
   protected Map<String, JsonRpcMethod> create(
-      final PrivateTransactionHandler privateTransactionHandler, final Enclave enclave) {
+      final PrivacyController privacyController,
+      final EnclavePublicKeyProvider enclavePublicKeyProvider) {
     return mapOf(
-        new PrivGetTransactionReceipt(getBlockchainQueries(), enclave, getPrivacyParameters()),
-        new PrivCreatePrivacyGroup(
-            new Enclave(getPrivacyParameters().getEnclaveUri()), getPrivacyParameters()),
-        new PrivDeletePrivacyGroup(
-            new Enclave(getPrivacyParameters().getEnclaveUri()), getPrivacyParameters()),
-        new PrivFindPrivacyGroup(new Enclave(getPrivacyParameters().getEnclaveUri())),
+        new PrivGetTransactionReceipt(
+            getBlockchainQueries(),
+            getPrivacyParameters(),
+            privacyController,
+            enclavePublicKeyProvider),
+        new PrivCreatePrivacyGroup(privacyController, enclavePublicKeyProvider),
+        new PrivDeletePrivacyGroup(privacyController, enclavePublicKeyProvider),
+        new PrivFindPrivacyGroup(privacyController, enclavePublicKeyProvider),
         new PrivGetPrivacyPrecompileAddress(getPrivacyParameters()),
-        new PrivGetTransactionCount(privateTransactionHandler),
-        new PrivGetPrivateTransaction(getBlockchainQueries(), enclave, getPrivacyParameters()),
-        new PrivDistributeRawTransaction(privateTransactionHandler, getTransactionPool()));
+        new PrivGetTransactionCount(privacyController, enclavePublicKeyProvider),
+        new PrivGetPrivateTransaction(
+            getBlockchainQueries(), privacyController, enclavePublicKeyProvider),
+        new PrivDistributeRawTransaction(privacyController, enclavePublicKeyProvider),
+        new PrivCall(getBlockchainQueries(), privacyController, enclavePublicKeyProvider),
+        new PrivGetCode(getBlockchainQueries(), privacyController, enclavePublicKeyProvider));
   }
 }

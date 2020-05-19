@@ -14,16 +14,16 @@
  */
 package org.hyperledger.besu.plugin.services;
 
-import org.hyperledger.besu.plugin.Unstable;
 import org.hyperledger.besu.plugin.data.Address;
 import org.hyperledger.besu.plugin.data.LogWithMetadata;
 import org.hyperledger.besu.plugin.data.PropagatedBlockContext;
 import org.hyperledger.besu.plugin.data.SyncStatus;
 import org.hyperledger.besu.plugin.data.Transaction;
-import org.hyperledger.besu.plugin.data.UnformattedData;
 
 import java.util.List;
 import java.util.Optional;
+
+import org.apache.tuweni.bytes.Bytes32;
 
 /**
  * This service allows plugins to attach to various events during the normal operation of Besu.
@@ -40,7 +40,6 @@ import java.util.Optional;
  *   <li><b>SynchronizerStatus </b> - Fired when the status of the synchronizer changes.
  * </ul>
  */
-@Unstable
 public interface BesuEvents {
 
   /**
@@ -114,8 +113,7 @@ public interface BesuEvents {
    * @param logListener The listener that will accept the log.
    * @return The id of the listener to be referred to used to remove the listener.
    */
-  long addLogListener(
-      List<Address> addresses, List<List<UnformattedData>> topics, LogListener logListener);
+  long addLogListener(List<Address> addresses, List<List<Bytes32>> topics, LogListener logListener);
 
   /**
    * Remove the log listener with the associated id.

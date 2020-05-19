@@ -14,6 +14,7 @@
  */
 package org.hyperledger.besu.tests.acceptance.dsl.node;
 
+import static com.google.common.base.Preconditions.checkState;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import org.hyperledger.besu.cli.options.NetworkingOptions;
@@ -90,6 +91,9 @@ public class ProcessBesuNodeRunner implements BesuNodeRunner {
       params.add(Integer.toString(node.getMiningParameters().getStratumPort()));
       params.add("--miner-stratum-host");
       params.add(node.getMiningParameters().getStratumNetworkInterface());
+      params.add("--min-gas-price");
+      params.add(
+          Integer.toString(node.getMiningParameters().getMinTransactionGasPrice().intValue()));
     }
     if (node.getMiningParameters().isStratumMiningEnabled()) {
       params.add("--miner-stratum-enabled");
@@ -99,8 +103,12 @@ public class ProcessBesuNodeRunner implements BesuNodeRunner {
       params.add("--privacy-enabled");
       params.add("--privacy-url");
       params.add(node.getPrivacyParameters().getEnclaveUri().toString());
-      params.add("--privacy-public-key-file");
-      params.add(node.getPrivacyParameters().getEnclavePublicKeyFile().getAbsolutePath());
+      if (node.getPrivacyParameters().isMultiTenancyEnabled()) {
+        params.add("--privacy-multi-tenancy-enabled");
+      } else {
+        params.add("--privacy-public-key-file");
+        params.add(node.getPrivacyParameters().getEnclavePublicKeyFile().getAbsolutePath());
+      }
       params.add("--privacy-precompiled-address");
       params.add(String.valueOf(node.getPrivacyParameters().getPrivacyAddress()));
       params.add("--privacy-marker-transaction-signing-key-file");
@@ -249,6 +257,9 @@ public class ProcessBesuNodeRunner implements BesuNodeRunner {
     params.add("--key-value-storage");
     params.add("rocksdb");
 
+    params.add("--auto-log-bloom-caching-enabled");
+    params.add("false");
+
     LOG.info("Creating besu process with params {}", params);
     final ProcessBuilder processBuilder =
         new ProcessBuilder(params)
@@ -264,6 +275,11 @@ public class ProcessBesuNodeRunner implements BesuNodeRunner {
     }
 
     try {
+      checkState(
+          isNotAliveOrphan(node.getName()),
+          "A live process with name: %s, already exists. Cannot create another with the same name as it would orphan the first",
+          node.getName());
+
       final Process process = processBuilder.start();
       outputProcessorExecutor.execute(() -> printOutput(node, process));
       besuProcesses.put(node.getName(), process);
@@ -271,7 +287,13 @@ public class ProcessBesuNodeRunner implements BesuNodeRunner {
       LOG.error("Error starting BesuNode process", e);
     }
 
-    waitForPortsFile(dataDir);
+    waitForFile(dataDir, "besu.ports");
+    waitForFile(dataDir, "besu.networks");
+  }
+
+  private boolean isNotAliveOrphan(final String name) {
+    final Process orphan = besuProcesses.get(name);
+    return orphan == null || !orphan.isAlive();
   }
 
   private void printOutput(final BesuNode node, final Process process) {

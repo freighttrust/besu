@@ -17,6 +17,7 @@ package org.hyperledger.besu.ethereum.api.jsonrpc;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.Streams.stream;
 import static java.util.stream.Collectors.toList;
+import static org.apache.tuweni.net.tls.VertxTrustOptions.whitelistClients;
 
 import org.hyperledger.besu.ethereum.api.jsonrpc.authentication.AuthenticationService;
 import org.hyperledger.besu.ethereum.api.jsonrpc.authentication.AuthenticationUtils;
@@ -32,11 +33,18 @@ import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcNoResp
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponseType;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcUnauthorizedResponse;
+import org.hyperledger.besu.ethereum.api.tls.TlsClientAuthConfiguration;
+import org.hyperledger.besu.ethereum.api.tls.TlsConfiguration;
 import org.hyperledger.besu.metrics.BesuMetricCategory;
+import org.hyperledger.besu.nat.NatMethod;
+import org.hyperledger.besu.nat.NatService;
+import org.hyperledger.besu.nat.core.domain.NatServiceType;
+import org.hyperledger.besu.nat.core.domain.NetworkProtocol;
 import org.hyperledger.besu.nat.upnp.UpnpNatManager;
 import org.hyperledger.besu.plugin.services.MetricsSystem;
 import org.hyperledger.besu.plugin.services.metrics.LabelledMetric;
 import org.hyperledger.besu.plugin.services.metrics.OperationTimer;
+import org.hyperledger.besu.util.ExceptionUtils;
 import org.hyperledger.besu.util.NetworkUtility;
 
 import java.net.InetSocketAddress;
@@ -56,6 +64,8 @@ import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
+import io.vertx.core.VertxException;
+import io.vertx.core.http.ClientAuth;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
@@ -64,6 +74,7 @@ import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.net.PfxOptions;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -84,7 +95,7 @@ public class JsonRpcHttpService {
   private final Vertx vertx;
   private final JsonRpcConfiguration config;
   private final Map<String, JsonRpcMethod> rpcMethods;
-  private final Optional<UpnpNatManager> natManager;
+  private final NatService natService;
   private final Path dataDir;
   private final LabelledMetric<OperationTimer> requestTimer;
 
@@ -101,7 +112,7 @@ public class JsonRpcHttpService {
    * @param dataDir The data directory where requests can be buffered
    * @param config Configuration for the rpc methods being loaded
    * @param metricsSystem The metrics service that activities should be reported to
-   * @param natManager The NAT environment manager.
+   * @param natService The NAT environment manager.
    * @param methods The json rpc methods that should be enabled
    * @param livenessService A service responsible for reporting whether this node is live
    * @param readinessService A service responsible for reporting whether this node has fully started
@@ -111,7 +122,7 @@ public class JsonRpcHttpService {
       final Path dataDir,
       final JsonRpcConfiguration config,
       final MetricsSystem metricsSystem,
-      final Optional<UpnpNatManager> natManager,
+      final NatService natService,
       final Map<String, JsonRpcMethod> methods,
       final HealthService livenessService,
       final HealthService readinessService) {
@@ -120,7 +131,7 @@ public class JsonRpcHttpService {
         dataDir,
         config,
         metricsSystem,
-        natManager,
+        natService,
         methods,
         AuthenticationService.create(vertx, config),
         livenessService,
@@ -132,7 +143,7 @@ public class JsonRpcHttpService {
       final Path dataDir,
       final JsonRpcConfiguration config,
       final MetricsSystem metricsSystem,
-      final Optional<UpnpNatManager> natManager,
+      final NatService natService,
       final Map<String, JsonRpcMethod> methods,
       final Optional<AuthenticationService> authenticationService,
       final HealthService livenessService,
@@ -147,7 +158,7 @@ public class JsonRpcHttpService {
     validateConfig(config);
     this.config = config;
     this.vertx = vertx;
-    this.natManager = natManager;
+    this.natService = natService;
     this.rpcMethods = methods;
     this.authenticationService = authenticationService;
     this.livenessService = livenessService;
@@ -164,14 +175,53 @@ public class JsonRpcHttpService {
   public CompletableFuture<?> start() {
     LOG.info("Starting JsonRPC service on {}:{}", config.getHost(), config.getPort());
 
-    // Create the HTTP server and a router object.
-    httpServer =
-        vertx.createHttpServer(
-            new HttpServerOptions()
-                .setHost(config.getHost())
-                .setPort(config.getPort())
-                .setHandle100ContinueAutomatically(true));
+    final CompletableFuture<?> resultFuture = new CompletableFuture<>();
+    try {
+      // Create the HTTP server and a router object.
+      httpServer = vertx.createHttpServer(getHttpServerOptions());
+      httpServer
+          .requestHandler(buildRouter())
+          .listen(
+              res -> {
+                if (!res.failed()) {
+                  resultFuture.complete(null);
+                  config.setPort(httpServer.actualPort());
+                  LOG.info(
+                      "JsonRPC service started and listening on {}:{}{}",
+                      config.getHost(),
+                      config.getPort(),
+                      tlsLogMessage());
 
+                  natService.ifNatEnvironment(
+                      NatMethod.UPNP,
+                      natManager -> {
+                        ((UpnpNatManager) natManager)
+                            .requestPortForward(
+                                config.getPort(), NetworkProtocol.TCP, NatServiceType.JSON_RPC);
+                      });
+
+                  return;
+                }
+
+                httpServer = null;
+                resultFuture.completeExceptionally(getFailureException(res.cause()));
+              });
+    } catch (final JsonRpcServiceException tlsException) {
+      httpServer = null;
+      resultFuture.completeExceptionally(tlsException);
+    } catch (final VertxException listenException) {
+      httpServer = null;
+      resultFuture.completeExceptionally(
+          new JsonRpcServiceException(
+              String.format(
+                  "Ethereum JSON RPC listener failed to start: %s",
+                  ExceptionUtils.rootCause(listenException).getMessage())));
+    }
+
+    return resultFuture;
+  }
+
+  private Router buildRouter() {
     // Handle json rpc requests
     final Router router = Router.router(vertx);
 
@@ -218,41 +268,72 @@ public class JsonRpcHttpService {
           .produces(APPLICATION_JSON)
           .handler(AuthenticationService::handleDisabledLogin);
     }
+    return router;
+  }
 
-    final CompletableFuture<?> resultFuture = new CompletableFuture<>();
-    httpServer
-        .requestHandler(router)
-        .listen(
-            res -> {
-              if (!res.failed()) {
-                resultFuture.complete(null);
-                final int actualPort = httpServer.actualPort();
-                LOG.info(
-                    "JsonRPC service started and listening on {}:{}", config.getHost(), actualPort);
-                config.setPort(actualPort);
-                // Request that a NAT port forward for our server port
-                if (natManager.isPresent()) {
-                  natManager
-                      .get()
-                      .requestPortForward(
-                          config.getPort(), UpnpNatManager.Protocol.TCP, "partheon-json-rpc");
-                }
-                return;
-              }
-              httpServer = null;
-              final Throwable cause = res.cause();
-              if (cause instanceof SocketException) {
-                resultFuture.completeExceptionally(
-                    new JsonRpcServiceException(
-                        String.format(
-                            "Failed to bind Ethereum JSON RPC listener to %s:%s: %s",
-                            config.getHost(), config.getPort(), cause.getMessage())));
-                return;
-              }
-              resultFuture.completeExceptionally(cause);
-            });
+  private HttpServerOptions getHttpServerOptions() {
+    final HttpServerOptions httpServerOptions =
+        new HttpServerOptions()
+            .setHost(config.getHost())
+            .setPort(config.getPort())
+            .setHandle100ContinueAutomatically(true);
 
-    return resultFuture;
+    applyTlsConfig(httpServerOptions);
+    return httpServerOptions;
+  }
+
+  private void applyTlsConfig(final HttpServerOptions httpServerOptions) {
+    if (config.getTlsConfiguration().isEmpty()) {
+      return;
+    }
+
+    final TlsConfiguration tlsConfiguration = config.getTlsConfiguration().get();
+    try {
+      httpServerOptions
+          .setSsl(true)
+          .setPfxKeyCertOptions(
+              new PfxOptions()
+                  .setPath(tlsConfiguration.getKeyStorePath().toString())
+                  .setPassword(tlsConfiguration.getKeyStorePassword()));
+
+      tlsConfiguration
+          .getClientAuthConfiguration()
+          .ifPresent(
+              clientAuthConfiguration ->
+                  applyTlsClientAuth(clientAuthConfiguration, httpServerOptions));
+    } catch (final RuntimeException re) {
+      throw new JsonRpcServiceException(
+          String.format(
+              "TLS options failed to initialize for Ethereum JSON RPC listener: %s",
+              re.getMessage()));
+    }
+  }
+
+  private void applyTlsClientAuth(
+      final TlsClientAuthConfiguration clientAuthConfiguration,
+      final HttpServerOptions httpServerOptions) {
+    httpServerOptions.setClientAuth(ClientAuth.REQUIRED);
+    clientAuthConfiguration
+        .getKnownClientsFile()
+        .ifPresent(
+            knownClientsFile ->
+                httpServerOptions.setTrustOptions(
+                    whitelistClients(
+                        knownClientsFile, clientAuthConfiguration.isCaClientsEnabled())));
+  }
+
+  private String tlsLogMessage() {
+    return config.getTlsConfiguration().isPresent() ? " with TLS enabled." : "";
+  }
+
+  private Throwable getFailureException(final Throwable listenFailure) {
+    if (listenFailure instanceof SocketException) {
+      return new JsonRpcServiceException(
+          String.format(
+              "Failed to bind Ethereum JSON RPC listener to %s:%s: %s",
+              config.getHost(), config.getPort(), listenFailure.getMessage()));
+    }
+    return listenFailure;
   }
 
   private Handler<RoutingContext> checkWhitelistHostHeader() {
@@ -323,7 +404,11 @@ public class JsonRpcHttpService {
     if (httpServer == null) {
       return "";
     }
-    return NetworkUtility.urlForSocketAddress("http", socketAddress());
+    return NetworkUtility.urlForSocketAddress(getScheme(), socketAddress());
+  }
+
+  private String getScheme() {
+    return config.getTlsConfiguration().isPresent() ? "https" : "http";
   }
 
   private void handleJsonRPCRequest(final RoutingContext routingContext) {
@@ -385,7 +470,7 @@ public class JsonRpcHttpService {
           final JsonRpcResponse jsonRpcResponse = (JsonRpcResponse) res.result();
           response.setStatusCode(status(jsonRpcResponse).code());
           response.putHeader("Content-Type", APPLICATION_JSON);
-          response.end(serialise(jsonRpcResponse));
+          response.end(serialize(jsonRpcResponse));
         });
   }
 
@@ -403,7 +488,7 @@ public class JsonRpcHttpService {
     }
   }
 
-  private String serialise(final JsonRpcResponse response) {
+  private String serialize(final JsonRpcResponse response) {
 
     if (response.getType() == JsonRpcResponseType.NONE) {
       return EMPTY_RESPONSE;

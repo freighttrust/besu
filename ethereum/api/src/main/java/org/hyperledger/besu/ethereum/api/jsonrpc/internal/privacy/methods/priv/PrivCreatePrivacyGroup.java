@@ -16,30 +16,31 @@ package org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.priv;
 
 import static org.apache.logging.log4j.LogManager.getLogger;
 
-import org.hyperledger.besu.enclave.Enclave;
-import org.hyperledger.besu.enclave.types.CreatePrivacyGroupRequest;
 import org.hyperledger.besu.enclave.types.PrivacyGroup;
 import org.hyperledger.besu.ethereum.api.jsonrpc.JsonRpcEnclaveErrorConverter;
 import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.JsonRpcMethod;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.methods.EnclavePublicKeyProvider;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.privacy.parameters.CreatePrivacyGroupParameter;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
 import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcSuccessResponse;
-import org.hyperledger.besu.ethereum.core.PrivacyParameters;
+import org.hyperledger.besu.ethereum.privacy.PrivacyController;
 
 import org.apache.logging.log4j.Logger;
 
 public class PrivCreatePrivacyGroup implements JsonRpcMethod {
 
   private static final Logger LOG = getLogger();
-  private final Enclave enclave;
-  private PrivacyParameters privacyParameters;
+  private final PrivacyController privacyController;
+  private final EnclavePublicKeyProvider enclavePublicKeyProvider;
 
-  public PrivCreatePrivacyGroup(final Enclave enclave, final PrivacyParameters privacyParameters) {
-    this.enclave = enclave;
-    this.privacyParameters = privacyParameters;
+  public PrivCreatePrivacyGroup(
+      final PrivacyController privacyController,
+      final EnclavePublicKeyProvider enclavePublicKeyProvider) {
+    this.privacyController = privacyController;
+    this.enclavePublicKeyProvider = enclavePublicKeyProvider;
   }
 
   @Override
@@ -59,15 +60,14 @@ public class PrivCreatePrivacyGroup implements JsonRpcMethod {
         parameter.getName(),
         parameter.getDescription());
 
-    final CreatePrivacyGroupRequest createPrivacyGroupRequest =
-        new CreatePrivacyGroupRequest(
-            parameter.getAddresses(),
-            privacyParameters.getEnclavePublicKey(),
-            parameter.getName(),
-            parameter.getDescription());
     final PrivacyGroup response;
     try {
-      response = enclave.createPrivacyGroup(createPrivacyGroupRequest);
+      response =
+          privacyController.createPrivacyGroup(
+              parameter.getAddresses(),
+              parameter.getName(),
+              parameter.getDescription(),
+              enclavePublicKeyProvider.getEnclaveKey(requestContext.getUser()));
     } catch (Exception e) {
       LOG.error("Failed to create privacy group", e);
       return new JsonRpcErrorResponse(

@@ -196,6 +196,11 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   }
 
   @Override
+  public OptionalLong getMuirGlacierBlockNumber() {
+    return getOptionalLong("muirglacierblock");
+  }
+
+  @Override
   public OptionalLong getClassicForkBlock() {
     return getOptionalLong("classicforkblock");
   }
@@ -223,6 +228,16 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
   @Override
   public OptionalLong getAtlantisBlockNumber() {
     return getOptionalLong("atlantisblock");
+  }
+
+  @Override
+  public OptionalLong getAghartaBlockNumber() {
+    return getOptionalLong("aghartablock");
+  }
+
+  @Override
+  public OptionalLong getAztlanBlockNumber() {
+    return getOptionalLong("aztlanblock");
   }
 
   @Override
@@ -268,6 +283,7 @@ public class JsonGenesisConfigOptions implements GenesisConfigOptions {
     getConstantinopleBlockNumber().ifPresent(l -> builder.put("constantinopleBlock", l));
     getConstantinopleFixBlockNumber().ifPresent(l -> builder.put("constantinopleFixBlock", l));
     getIstanbulBlockNumber().ifPresent(l -> builder.put("istanbulBlock", l));
+    getMuirGlacierBlockNumber().ifPresent(l -> builder.put("muirGlacierBlock", l));
     getContractSizeLimit().ifPresent(l -> builder.put("contractSizeLimit", l));
     getEvmStackSize().ifPresent(l -> builder.put("evmstacksize", l));
     if (isClique()) {

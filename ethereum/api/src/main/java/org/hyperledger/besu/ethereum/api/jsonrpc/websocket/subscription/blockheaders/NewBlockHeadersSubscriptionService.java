@@ -22,7 +22,15 @@ import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
 import org.hyperledger.besu.ethereum.chain.BlockAddedEvent;
 import org.hyperledger.besu.ethereum.chain.BlockAddedObserver;
 import org.hyperledger.besu.ethereum.chain.Blockchain;
+import org.hyperledger.besu.ethereum.core.Block;
 import org.hyperledger.besu.ethereum.core.Hash;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.function.Supplier;
+
+import com.google.common.base.Suppliers;
 
 public class NewBlockHeadersSubscriptionService implements BlockAddedObserver {
 
@@ -39,22 +47,41 @@ public class NewBlockHeadersSubscriptionService implements BlockAddedObserver {
   @Override
   public void onBlockAdded(final BlockAddedEvent event, final Blockchain blockchain) {
     if (event.isNewCanonicalHead()) {
-      subscriptionManager.notifySubscribersOnWorkerThread(
-          SubscriptionType.NEW_BLOCK_HEADERS,
-          NewBlockHeadersSubscription.class,
-          subscribers -> {
-            final Hash newBlockHash = event.getBlock().getHash();
+      final List<Block> blocks = new ArrayList<>();
+      Block blockPtr = event.getBlock();
 
-            for (final NewBlockHeadersSubscription subscription : subscribers) {
-              final BlockResult newBlock =
-                  subscription.getIncludeTransactions()
-                      ? blockWithCompleteTransaction(newBlockHash)
-                      : blockWithTransactionHash(newBlockHash);
+      while (!blockPtr.getHash().equals(event.getCommonAncestorHash())) {
+        blocks.add(blockPtr);
 
-              subscriptionManager.sendMessage(subscription.getSubscriptionId(), newBlock);
-            }
-          });
+        blockPtr =
+            blockchain
+                .getBlockByHash(blockPtr.getHeader().getParentHash())
+                .orElseThrow(() -> new IllegalStateException("The block was on a orphaned chain."));
+      }
+
+      Collections.reverse(blocks);
+      blocks.forEach(b -> notifySubscribers(b.getHash()));
     }
+  }
+
+  private void notifySubscribers(final Hash newBlockHash) {
+    subscriptionManager.notifySubscribersOnWorkerThread(
+        SubscriptionType.NEW_BLOCK_HEADERS,
+        NewBlockHeadersSubscription.class,
+        subscribers -> {
+          // memoize
+          final Supplier<BlockResult> blockWithTx =
+              Suppliers.memoize(() -> blockWithCompleteTransaction(newBlockHash));
+          final Supplier<BlockResult> blockWithoutTx =
+              Suppliers.memoize(() -> blockWithTransactionHash(newBlockHash));
+
+          for (final NewBlockHeadersSubscription subscription : subscribers) {
+            final BlockResult newBlock =
+                subscription.getIncludeTransactions() ? blockWithTx.get() : blockWithoutTx.get();
+
+            subscriptionManager.sendMessage(subscription.getSubscriptionId(), newBlock);
+          }
+        });
   }
 
   private BlockResult blockWithCompleteTransaction(final Hash hash) {

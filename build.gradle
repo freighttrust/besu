@@ -13,6 +13,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+
+import groovy.transform.Memoized
 import net.ltgt.gradle.errorprone.CheckSeverity
 
 import java.text.SimpleDateFormat
@@ -22,6 +24,7 @@ plugins {
   id 'com.jfrog.bintray' version '1.8.4'
   id 'com.github.ben-manes.versions' version '0.26.0'
   id 'com.github.hierynomus.license' version '0.15.0'
+  id 'com.google.protobuf' version '0.8.11'
   id 'io.spring.dependency-management' version '1.0.8.RELEASE'
   id 'me.champeau.gradle.jmh' version '0.5.0' apply false
   id 'net.ltgt.errorprone' version '1.1.1'
@@ -49,7 +52,7 @@ gradle.startParameter.taskNames.each {
 }
 gradle.startParameter.taskNames = expandedTaskList.flatten()
 
-// Gets a integer command argument, passed with -Pname=x, or the defaut if not provided.
+// Gets an integer command argument, passed with -Pname=x, or the default if not provided.
 def _intCmdArg(name, defaultValue) {
   return project.hasProperty(name) ? project.property(name) as int : defaultValue
 }
@@ -92,6 +95,7 @@ allprojects {
   apply plugin: 'io.spring.dependency-management'
   apply plugin: 'jacoco'
   apply plugin: 'net.ltgt.errorprone'
+  apply plugin: 'com.google.protobuf'
   apply from: "${rootDir}/gradle/versions.gradle"
   apply from: "${rootDir}/gradle/check-licenses.gradle"
 
@@ -118,18 +122,15 @@ allprojects {
   targetCompatibility = 11
 
   repositories {
-    if ("$System.env.JENKINS_URL" == 'https://jenkins.pegasys.tech/') {
-      maven { url "https://nexus.int.pegasys.tech/repository/consensys-pegasys/" }
-      maven { url "https://nexus.int.pegasys.tech/repository/jcenter/" }
-    } else {
-      jcenter()
-      mavenCentral()
-      mavenLocal()
-      maven { url "https://consensys.bintray.com/pegasys-repo" }
-    }
+    jcenter()
+    mavenCentral()
+    mavenLocal()
+    maven { url "https://consensys.bintray.com/pegasys-repo" }
+    maven { url "https://repository.apache.org/content/repositories/snapshots/" }
+    maven { url "https://digitalassetsdk.bintray.com/DigitalAssetSDK" }
   }
 
-  dependencies { errorprone("com.google.errorprone:error_prone_core") }
+  dependencies { errorprone "com.google.errorprone:error_prone_core" }
 
   apply plugin: 'com.diffplug.gradle.spotless'
   spotless {
@@ -193,8 +194,6 @@ allprojects {
       check('ImmutableEnumChecker', CheckSeverity.OFF)
       // This is a style check instead of an error-prone pattern.
       check('UnnecessaryParentheses', CheckSeverity.OFF)
-      // Lazy impl causes excess CPU usage O(n) of non-final fiield when it should be O(1).
-      check('FieldCanBeFinal', CheckSeverity.OFF)
 
       // This check is broken in Java 12.  See https://github.com/google/error-prone/issues/1257
       if (JavaVersion.current() == JavaVersion.VERSION_12) {
@@ -205,6 +204,7 @@ allprojects {
         check('TypeParameterUnusedInFormals', CheckSeverity.OFF)
       }
 
+      check('FieldCanBeFinal', CheckSeverity.WARN)
       check('InsecureCryptoUsage', CheckSeverity.WARN)
       check('WildcardImport', CheckSeverity.WARN)
     }
@@ -294,6 +294,9 @@ check.dependsOn('checkPluginAPIChanges', 'checkMavenCoordinateCollisions')
 subprojects {
 
   sourceSets {
+    // tell vscode and others where google protobuf plugin puts generated source files
+    main.java.srcDirs += 'build/generated/source/proto/main/java'
+
     // test-support can be consumed as a library by other projects in their tests
     testSupport {
       java {
@@ -314,7 +317,7 @@ subprojects {
   }
 
   task testSupportJar(type: Jar) {
-    baseName = "${project.name}-support-test"
+    archiveBaseName = "${project.name}-support-test"
     classifier = 'test-support'
     from sourceSets.testSupport.output
   }
@@ -406,6 +409,12 @@ subprojects {
     group = "verification"
     description = "Runs the Besu integration tests"
 
+    jvmArgs = [
+      '--add-opens',
+      'java.base/java.util=ALL-UNNAMED',
+      '--add-opens',
+      'java.base/java.util.concurrent=ALL-UNNAMED'
+    ]
     testClassesDirs = sourceSets.integrationTest.output.classesDirs
     classpath = sourceSets.integrationTest.runtimeClasspath
     outputs.upToDateWhen { false }
@@ -481,7 +490,7 @@ startScripts {
 
 
 dependencies {
-  compile project(':besu')
+  implementation project(':besu')
   errorprone 'com.google.errorprone:error_prone_core'
 }
 
@@ -504,7 +513,7 @@ distTar {
     delete fileTree(dir: 'build/distributions', include: '*.tar.gz')
   }
   compression = Compression.GZIP
-  extension = 'tar.gz'
+  archiveExtension = 'tar.gz'
 }
 
 distZip {
@@ -536,7 +545,8 @@ tasks.register("dockerDistUntar") {
 task distDocker(type: Exec) {
   dependsOn dockerDistUntar
   def dockerBuildVersion = project.hasProperty('release.releaseVersion') ? project.property('release.releaseVersion') : "${rootProject.version}"
-  def image = project.hasProperty('release.releaseVersion') ? "hyperledger/besu:" + project.property('release.releaseVersion') : "hyperledger/besu:${project.version}"
+  def imageName = "hyperledger/besu"
+  def image = "${imageName}:${dockerBuildVersion}"
   def dockerBuildDir = "build/docker-besu/"
   workingDir "${dockerBuildDir}"
 
@@ -567,8 +577,10 @@ task testDocker(type: Exec) {
 
 task dockerUpload(type: Exec) {
   dependsOn distDocker
+  def dockerBuildVersion = project.hasProperty('release.releaseVersion') ? project.property('release.releaseVersion') : "${rootProject.version}"
   def imageName = "hyperledger/besu"
-  def image = project.hasProperty('release.releaseVersion') ? "${imageName}:" + project.property('release.releaseVersion') : "${imageName}:${project.version}"
+  def azureImageName = "hyperledger.azurecr.io/besu"
+  def image = "${imageName}:${dockerBuildVersion}"
   def cmd = "docker push '${image}'"
   def additionalTags = []
 
@@ -576,13 +588,14 @@ task dockerUpload(type: Exec) {
     additionalTags.add('develop')
   }
 
-  if (!version ==~ /.*-SNAPSHOT/) {
+  if (!(dockerBuildVersion ==~ /.*-SNAPSHOT/)) {
     additionalTags.add('latest')
-    additionalTags.add(version.split(/\./)[0..1].join('.'))
+    additionalTags.add(dockerBuildVersion.split(/\./)[0..1].join('.'))
   }
 
   additionalTags.each { tag ->
     cmd += " && docker tag '${image}' '${imageName}:${tag.trim()}' && docker push '${imageName}:${tag.trim()}'"
+    cmd += " && docker tag '${image}' '${azureImageName}:${tag.trim()}' && docker push '${azureImageName}:${tag.trim()}'"
   }
   executable "sh"
   args "-c", cmd
@@ -594,7 +607,7 @@ task checkSpdxHeader(type: CheckSpdxHeader) {
   rootPath = "${projectDir}"
   spdxHeader = "* SPDX-License-Identifier: Apache-2.0"
   filesRegex = "(.*.java)|(.*.groovy)"
-  excludeRegex = "(.*generalstate/GeneralStateRegressionReferenceTest.*)|(.*generalstate/GeneralStateReferenceTest.*)|(.*blockchain/BlockchainReferenceTest.*)|(.*.gradle/.*)"
+  excludeRegex = "(.*generalstate/GeneralStateRegressionReferenceTest.*)|(.*generalstate/GeneralStateReferenceTest.*)|(.*blockchain/BlockchainReferenceTest.*)|(.*.gradle/.*)|(.*.idea/.*)"
 }
 
 task jacocoRootReport(type: org.gradle.testing.jacoco.tasks.JacocoReport) {
@@ -632,6 +645,7 @@ def buildTime() {
 
 // Takes the version, and if -SNAPSHOT is part of it replaces SNAPSHOT
 // with the git commit version.
+@Memoized
 def calculateVersion() {
   String version = rootProject.version
   if (version.endsWith("-SNAPSHOT")) {
@@ -641,25 +655,31 @@ def calculateVersion() {
 }
 
 def getCheckedOutGitCommitHash() {
-  def gitFolder = "$projectDir/.git/"
-  if (!file(gitFolder).isDirectory()) {
-    // We are in a submodule.  The file's contents are `gitdir: <gitFolder>\n`.
-    // Read the file, cut off the front, and trim the whitespace.
-    gitFolder = file(gitFolder).text.substring(8).trim() + "/"
+  try {
+    def gitFolder = "$projectDir/.git/"
+    if (!file(gitFolder).isDirectory()) {
+      // We are in a submodule.  The file's contents are `gitdir: <gitFolder>\n`.
+      // Read the file, cut off the front, and trim the whitespace.
+      gitFolder = file(gitFolder).text.substring(8).trim() + "/"
+    }
+    def takeFromHash = 8
+    /*
+     * '.git/HEAD' contains either
+     *      in case of detached head: the currently checked out commit hash
+     *      otherwise: a reference to a file containing the current commit hash
+     */
+    def head = new File(gitFolder + "HEAD").text.split(":") // .git/HEAD
+    def isCommit = head.length == 1 // e5a7c79edabbf7dd39888442df081b1c9d8e88fd
+
+    if (isCommit) return head[0].trim().take(takeFromHash) // e5a7c79edabb
+
+    def refHead = new File(gitFolder + head[1].trim()) // .git/refs/heads/master
+    refHead.text.trim().take takeFromHash
+  } catch (Exception e) {
+    logger.warn('Could not calculate git commit, using "xxxxxxxx" (run with --info for stacktrace)')
+    logger.info('Error retrieving git commit', e)
+    return "xxxxxxxx"
   }
-  def takeFromHash = 8
-  /*
-   * '.git/HEAD' contains either
-   *      in case of detached head: the currently checked out commit hash
-   *      otherwise: a reference to a file containing the current commit hash
-   */
-  def head = new File(gitFolder + "HEAD").text.split(":") // .git/HEAD
-  def isCommit = head.length == 1 // e5a7c79edabbf7dd39888442df081b1c9d8e88fd
-
-  if (isCommit) return head[0].trim().take(takeFromHash) // e5a7c79edabb
-
-  def refHead = new File(gitFolder + head[1].trim()) // .git/refs/heads/master
-  refHead.text.trim().take takeFromHash
 }
 
 tasks.register("verifyDistributions") {
@@ -685,8 +705,9 @@ bintray {
   key = bintrayKey
 
   filesSpec {
-    from distTar.destinationDir.path
-    from distZip.destinationDir.path
+    from distTar.destinationDirectory
+    from distZip.destinationDirectory
+    from file("plugin-api/build/libs/plugin-api-$version-javadoc.jar")
     into '.'
   }
 
@@ -701,3 +722,4 @@ build.dependsOn verifyDistributions
 bintrayUpload.dependsOn verifyDistributions
 bintrayUpload.mustRunAfter(distTar)
 bintrayUpload.mustRunAfter(distZip)
+bintrayUpload.mustRunAfter(javadocJar)

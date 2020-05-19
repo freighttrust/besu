@@ -56,6 +56,8 @@ public interface GenesisConfigOptions {
 
   OptionalLong getIstanbulBlockNumber();
 
+  OptionalLong getMuirGlacierBlockNumber();
+
   /**
    * Block number for the Dao Fork, this value is used to tell node to connect with peer that did
    * NOT accept the Dao Fork and instead continued as what is now called the classic network
@@ -124,6 +126,29 @@ public interface GenesisConfigOptions {
    * @return block number for Atlantis fork on Classic network
    */
   OptionalLong getAtlantisBlockNumber();
+
+  /**
+   * Block number for Agharta fork on Classic network. Enable the outstanding Ethereum Foundation
+   * Constaninople and Petersburg network protocol upgrades on the Ethereum Classic network in a
+   * hard-fork code-named Agharta to enable maximum compatibility across these networks.
+   *
+   * @see <a
+   *     href="https://ecips.ethereumclassic.org/ECIPs/ecip-1056">https://ecips.ethereumclassic.org/ECIPs/ecip-1056</a>
+   * @return block number for Agharta fork on Classic network
+   */
+  OptionalLong getAghartaBlockNumber();
+
+  /**
+   * Block number for Aztlán fork on Classic network. Aztlán EVM and Protocol Upgrades (Yingchun
+   * Edition) Enable the outstanding Ethereum Foundation Istanbul network protocol upgrades on the
+   * Ethereum Classic network without any gas-cost assumptions in a hard-fork code-named Aztlán
+   * (Yingchun Edition) to enable maximum compatibility across these networks.
+   *
+   * @see <a
+   *     href="https://ecips.ethereumclassic.org/ECIPs/ecip-1061">https://ecips.ethereumclassic.org/ECIPs/ecip-1061</a>
+   * @return block number for Atzlan fork on Classic network
+   */
+  OptionalLong getAztlanBlockNumber();
 
   Optional<BigInteger> getChainId();
 

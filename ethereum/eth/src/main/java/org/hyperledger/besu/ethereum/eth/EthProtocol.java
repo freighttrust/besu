@@ -31,6 +31,7 @@ public class EthProtocol implements SubProtocol {
   public static final String NAME = "eth";
   public static final Capability ETH62 = Capability.create(NAME, EthVersion.V62);
   public static final Capability ETH63 = Capability.create(NAME, EthVersion.V63);
+  public static final Capability ETH64 = Capability.create(NAME, EthVersion.V64);
   private static final EthProtocol INSTANCE = new EthProtocol();
 
   private static final List<Integer> eth62Messages =
@@ -63,6 +64,7 @@ public class EthProtocol implements SubProtocol {
       case EthVersion.V62:
         return 8;
       case EthVersion.V63:
+      case EthVersion.V64:
         return 17;
       default:
         return 0;
@@ -75,6 +77,7 @@ public class EthProtocol implements SubProtocol {
       case EthVersion.V62:
         return eth62Messages.contains(code);
       case EthVersion.V63:
+      case EthVersion.V64:
         return eth63Messages.contains(code);
       default:
         return false;
@@ -120,5 +123,6 @@ public class EthProtocol implements SubProtocol {
   public static class EthVersion {
     public static final int V62 = 62;
     public static final int V63 = 63;
+    public static final int V64 = 64;
   }
 }
